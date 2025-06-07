@@ -36,19 +36,19 @@ Incluye código para insertar datos, ejecutar consultas y obtener recomendacione
 git clone https://github.com/Shiramasa1606/Seminario.git
 cd Seminario
 code .
+```
 
 ### 4. Crear archivo `.env` con variables de entorno
 
 En la raíz del proyecto, crea un archivo llamado `.env` con el siguiente contenido:
-
+```ini
 NEO4J_URI=bolt://localhost:7687
 NEO4J_USER=neo4j
 NEO4J_PASSWORD=tu_contraseña_de_neo4j
-
-
+```
+```yaml
 > ⚠️ **Importante**: `tu_contraseña_de_neo4j` debe ser la contraseña que asignaste al crear la base de datos dentro de la aplicación **Neo4j Desktop**. No es una contraseña universal, es específica de la base de datos que estás utilizando en tu entorno local.
-
----
+```
 
 ### 5. Instalar dependencias
 
@@ -69,6 +69,7 @@ pip install -r requirements.txt
 
 #Si no tienes el archivo requirements.txt, puedes instalar directamente:
 pip install neo4j python-dotenv
+```
 
 ###6. Ejecutar el proyecto
 
