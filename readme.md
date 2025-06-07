@@ -46,9 +46,9 @@ NEO4J_URI=bolt://localhost:7687
 NEO4J_USER=neo4j
 NEO4J_PASSWORD=tu_contraseña_de_neo4j
 ```
-```yaml
+
 > ⚠️ **Importante**: `tu_contraseña_de_neo4j` debe ser la contraseña que asignaste al crear la base de datos dentro de la aplicación **Neo4j Desktop**. No es una contraseña universal, es específica de la base de datos que estás utilizando en tu entorno local.
-```
+
 
 ### 5. Instalar dependencias
 
