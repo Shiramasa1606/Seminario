@@ -1,1 +1,17 @@
+# Ignorar archivo de variables de entorno (credenciales)
 .env
+
+# Ignorar archivos pycache generados por Python
+__pycache__/
+*.py[cod]
+
+# Ignorar carpetas y archivos de entorno virtual (si usas venv o similar)
+venv/
+.envrc
+.env.local
+
+# Ignorar archivos de configuración de editor (ejemplos comunes)
+.vscode/
+.idea/
+*.sublime-workspace
+*.sublime-project
