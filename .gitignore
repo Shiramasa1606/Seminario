@@ -2,7 +2,7 @@
 .env
 
 # Ignorar archivos pycache generados por Python
-__pycache__/
+*.__pycache__/
 *.py[cod]
 
 # Ignorar carpetas y archivos de entorno virtual (si usas venv o similar)
