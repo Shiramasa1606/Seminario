@@ -1,6 +1,7 @@
 from neo4j import Driver, ManagedTransaction
 from Neo4J.conn import obtener_driver
 from typing import List, Optional, Dict
+from datetime import date
 
 # ===================== Recomendaciones ===========================
 
@@ -91,13 +92,16 @@ def crear_alumno(tx: ManagedTransaction, alumno_id: str, nombre: Optional[str] =
     """
     tx.run(query, alumno_id=alumno_id, nombre=nombre)
 
-def marcar_actividad_completada(tx: ManagedTransaction, alumno_id: str, actividad_id: str) -> None:
+def marcar_actividad_completada(tx: ManagedTransaction, alumno_id: str, actividad_id: str, fecha: Optional[date] = None, a_tiempo: Optional[bool] = None) -> None:
     query = """
     MATCH (a:Alumno {id: $alumno_id})
     MATCH (act:Actividad {id: $actividad_id})
-    MERGE (a)-[:COMPLETA]->(act)
+    MERGE (a)-[r:COMPLETA]->(act)
+    SET r.fecha = $fecha,
+        r.a_tiempo = $a_tiempo
     """
-    tx.run(query, alumno_id=alumno_id, actividad_id=actividad_id)
+    fecha_str = fecha.isoformat() if fecha else None
+    tx.run(query, alumno_id=alumno_id, actividad_id=actividad_id, fecha=fecha_str, a_tiempo=a_tiempo)
 
 def quitar_completitud(tx: ManagedTransaction, alumno_id: str, actividad_id: str) -> None:
     query = """
