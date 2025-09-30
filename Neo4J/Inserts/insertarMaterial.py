@@ -1,56 +1,67 @@
-import os
-from neo4j import GraphDatabase, Driver, ManagedTransaction
-from dotenv import load_dotenv
+from pathlib import Path
+from neo4j import Driver, ManagedTransaction
 
-
-
-# ===================== Conexión =====================
-def obtener_driver() -> Driver:
-    load_dotenv()
-    NEO4J_URI: str = os.getenv("NEO4J_URI", "")
-    NEO4J_USER: str = os.getenv("NEO4J_USER", "")
-    NEO4J_PASSWORD: str = os.getenv("NEO4J_PASSWORD", "")
-    return GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
-
-# ===================== Funciones =====================
+# ==========================
+# Insertar Unidad
+# ==========================
 def insertar_unidad(tx: ManagedTransaction, nombre_unidad: str) -> None:
-    tx.run("""
+    """
+    Inserta una Unidad en Neo4j si no existe, utilizando MERGE.
+    """
+    tx.run(
+        """
         MERGE (u:Unidad {nombre: $nombre})
-    """, nombre=nombre_unidad)
+        """,
+        nombre=nombre_unidad
+    )
     print(f"✅ Unidad insertada/validada: {nombre_unidad}")
 
+
+# ==========================
+# Insertar RAP
+# ==========================
 def insertar_rap(tx: ManagedTransaction, nombre_unidad: str, nombre_rap: str) -> None:
-    tx.run("""
+    """
+    Inserta un RAP en Neo4j y lo asocia con su Unidad.
+    """
+    tx.run(
+        """
         MATCH (u:Unidad {nombre: $unidad})
         MERGE (r:RAP {nombre: $rap})
         MERGE (u)-[:TIENE_RAP]->(r)
-    """, unidad=nombre_unidad, rap=nombre_rap)
+        """,
+        unidad=nombre_unidad,
+        rap=nombre_rap
+    )
     print(f"   📘 RAP insertado/validado en {nombre_unidad}: {nombre_rap}")
 
-def procesar_unidades_y_raps(base_path: str) -> None:
-    driver: Driver = obtener_driver()
+
+# ==========================
+# Procesar Unidades y RAPs
+# ==========================
+def procesar_unidades_y_raps(driver: Driver, base_path: Path) -> None:
+    """
+    Procesa todas las carpetas que comienzan con 'Unidad' en la ruta base.
+    Inserta las Unidades y sus respectivos RAPs en Neo4j.
+    """
+    if not base_path.exists() or not base_path.is_dir():
+        raise FileNotFoundError(f"La ruta base no es válida: {base_path}")
+
     with driver.session() as session:
-        for carpeta in os.listdir(base_path):
-            carpeta_path = os.path.join(base_path, carpeta)
+        for carpeta in base_path.iterdir():
+            # Procesar solo directorios que empiecen con "Unidad"
+            if carpeta.is_dir() and carpeta.name.lower().startswith("unidad"):
+                # Insertar la Unidad
+                session.execute_write(insertar_unidad, carpeta.name)
 
-            # Filtrar: solo aceptar carpetas que empiecen con "Unidad"
-            if os.path.isdir(carpeta_path) and carpeta.lower().startswith("unidad"):
-                # Insertar unidad
-                session.execute_write(insertar_unidad, carpeta)
-
-                # Buscar carpeta RAP dentro de la unidad
-                rap_folder = os.path.join(carpeta_path, "RAP")
-                if os.path.isdir(rap_folder):
-                    for archivo in os.listdir(rap_folder):
-                        rap_name, _ = os.path.splitext(archivo)
-                        session.execute_write(insertar_rap, carpeta, rap_name)
+                # Buscar carpeta RAP dentro de la Unidad
+                rap_folder = carpeta / "RAP"
+                if rap_folder.exists() and rap_folder.is_dir():
+                    for archivo in rap_folder.iterdir():
+                        if archivo.is_file():
+                            rap_name = archivo.stem  # Nombre sin extensión
+                            session.execute_write(insertar_rap, carpeta.name, rap_name)
                 else:
-                    print(f"⚠️ Carpeta RAP no encontrada en {carpeta_path}")
+                    print(f"⚠️ Carpeta RAP no encontrada en {carpeta}")
             else:
-                print(f"⏭️ Carpeta ignorada: {carpeta}")
-    driver.close()
-
-# ===================== Main =====================
-if __name__ == "__main__":
-    BASE_PATH: str = os.getenv("BASE_PATH", "")
-    procesar_unidades_y_raps(BASE_PATH)
+                print(f"⏭️ Carpeta ignorada: {carpeta.name}")
