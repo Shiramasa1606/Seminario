@@ -14,7 +14,7 @@ def limpiar_bd(tx: ManagedTransaction) -> None:
 # ==========================
 # Función: insertar alumnos
 # ==========================
-def insertar_alumnos(tx: ManagedTransaction, alumnos: DataFrame) -> None:
+def insertar_alumno(tx: ManagedTransaction, alumnos: DataFrame) -> None:
     """
     Inserta alumnos en Neo4j a partir de un DataFrame.
     

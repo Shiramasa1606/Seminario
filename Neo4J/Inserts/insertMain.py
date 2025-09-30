@@ -4,12 +4,12 @@ from pathlib import Path
 from typing import List
 import pandas as pd
 from dotenv import load_dotenv
-from neo4j import GraphDatabase, Driver
-
+from neo4j import Driver
+from conn import obtener_driver
 # ==========================
 # Importar módulos internos
 # ==========================
-from insertarAlumnos import insertar_alumnos, limpiar_bd
+from insertarAlumnos import insertar_alumno, limpiar_bd
 from insertarMaterial import procesar_unidades_y_raps
 from insertarCuestionariosAyudantias import procesar_cuestionarios_y_ayudantias
 from Relaciones.relacionarAlumnos import procesar_unidades as relacionar_alumnos
@@ -27,24 +27,10 @@ if not BASE_PATH.exists():
     raise FileNotFoundError(f"❌ BASE_PATH no existe: {BASE_PATH}")
 
 # ==========================
-# Crear conexión a Neo4j
-# ==========================
-def crear_driver() -> Driver:
-    """Crea y retorna un driver de Neo4j usando variables de entorno."""
-    uri: str = os.getenv("NEO4J_URI", "")
-    user: str = os.getenv("NEO4J_USER", "")
-    password: str = os.getenv("NEO4J_PASSWORD", "")
-
-    if not uri or not user or not password:
-        raise RuntimeError("❌ Faltan credenciales de Neo4j en .env")
-
-    return GraphDatabase.driver(uri.strip(), auth=(user.strip(), password.strip()))
-
-# ==========================
 # Función principal
 # ==========================
 def main() -> None:
-    driver: Driver = crear_driver()
+    driver: Driver = obtener_driver()
 
     try:
         # Abrimos una sola sesión para todo el proceso
@@ -63,7 +49,7 @@ def main() -> None:
             ]
             for ruta in rutas_csv:
                 df: pd.DataFrame = pd.read_csv(ruta)  # type: ignore
-                session.execute_write(insertar_alumnos, df)
+                session.execute_write(insertar_alumno, df)
                 print(f"✅ Alumnos insertados desde: {ruta.name}")
 
             # --------------------------
