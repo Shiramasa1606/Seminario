@@ -77,14 +77,15 @@ def main() -> None:
             procesar_cuestionarios_y_ayudantias(driver, BASE_PATH)
 
             # --------------------------
+            # Validar relaciones de material (Unidades y RAPs)
+            # --------------------------
+            validar_relaciones_material(driver, BASE_PATH)
+
+            # --------------------------
             # Relacionar alumnos con cuestionarios y ayudantías
             # --------------------------
             relacionar_alumnos(driver, BASE_PATH)
 
-            # --------------------------
-            # Validar relaciones de material (Unidades y RAPs)
-            # --------------------------
-            validar_relaciones_material(driver, BASE_PATH)
 
     finally:
         driver.close()
