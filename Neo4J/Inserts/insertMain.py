@@ -5,15 +5,15 @@ from typing import List
 import pandas as pd
 from dotenv import load_dotenv
 from neo4j import Driver
-from conn import obtener_driver
+from Neo4J.conn import obtener_driver
 # ==========================
 # Importar módulos internos
 # ==========================
-from insertarAlumnos import insertar_alumno, limpiar_bd
-from insertarMaterial import procesar_unidades_y_raps
-from insertarCuestionariosAyudantias import procesar_cuestionarios_y_ayudantias
-from Relaciones.relacionarAlumnos import procesar_unidades as relacionar_alumnos
-from Relaciones.relacionarMaterial import procesar_relaciones as validar_relaciones_material
+from Neo4J.Inserts.insertarAlumnos import insertar_alumno, limpiar_bd
+from Neo4J.Inserts.insertarMaterial import procesar_unidades_y_raps
+from Neo4J.Inserts.insertarCuestionariosAyudantias import procesar_cuestionarios_y_ayudantias
+from Neo4J.Inserts.Relaciones.relacionarAlumnos import procesar_unidades as relacionar_alumnos
+from Neo4J.Inserts.Relaciones.relacionarMaterial import procesar_relaciones as validar_relaciones_material
 
 # ==========================
 # Cargar variables de entorno
@@ -29,7 +29,7 @@ if not BASE_PATH.exists():
 # ==========================
 # Función principal
 # ==========================
-def main() -> None:
+def rellenarGrafo() -> None:
     driver: Driver = obtener_driver()
 
     try:
@@ -74,11 +74,4 @@ def main() -> None:
 
 
     finally:
-        driver.close()
-        print("🔒 Conexión a Neo4j cerrada correctamente.")
-
-# ==========================
-# Entrada principal
-# ==========================
-if __name__ == "__main__":
-    main()
+        return

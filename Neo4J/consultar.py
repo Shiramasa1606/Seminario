@@ -1,5 +1,5 @@
 from neo4j import ManagedTransaction
-from typing import List, Optional, Mapping, Any
+from typing import List, Optional, Mapping, Any, Dict
 
 # ===================== Consulta de progreso ===========================
 
@@ -23,7 +23,7 @@ def progreso_alumno(tx: ManagedTransaction, alumno_id: str) -> List[Mapping[str,
 
 # ===================== Estrategia de recomendación híbrida ===========================
 
-def recomendar_siguiente(tx: ManagedTransaction, alumno_id: str) -> Optional[Mapping[str, Any]]:
+def recomendar_siguiente(tx: ManagedTransaction, alumno_id: str) -> Optional[Dict[str, Any]]:
     """
     Genera la recomendación de la siguiente actividad para un alumno según estrategia híbrida:
         - Refuerzo: si tiene actividades iniciadas pero no completadas ("Intento")
@@ -58,3 +58,55 @@ def recomendar_siguiente(tx: ManagedTransaction, alumno_id: str) -> Optional[Map
 
     # ----- Si no hay nada que recomendar -----
     return None
+
+# ===================== Roadmap completo ===========================
+
+def generar_roadmap(tx: ManagedTransaction, alumno_id: str) -> List[Dict[str, Any]]:
+    """
+    Genera un roadmap completo de actividades recomendadas para el alumno,
+    simulando la progresión según la lógica híbrida sin modificar la DB.
+    """
+    roadmap: List[Dict[str, Any]] = []
+    vistos: set[str] = set()
+
+    while True:
+        recomendacion = recomendar_siguiente(tx, alumno_id)
+        if not recomendacion:
+            break
+
+        # Crear identificador temporal para evitar ciclos
+        act = recomendacion['actividad']
+        act_id = f"{act.get('nombre')}-{recomendacion['estrategia']}"
+        if act_id in vistos:
+            break
+        vistos.add(act_id)
+
+        roadmap.append(recomendacion)
+
+        # Simular actualización de progreso en memoria
+        # Esto evita múltiples llamadas al mismo nodo en el roadmap
+        # NOTA: no modifica la DB
+        if recomendacion['estrategia'] == 'refuerzo':
+            act['estado'] = 'Completado'
+        elif recomendacion['estrategia'] == 'mejora':
+            act['estado'] = 'Perfecto'
+        else:
+            # Para 'avance' simulamos que la actividad fue completada
+            act['estado'] = 'Perfecto'
+
+    return roadmap
+
+# ===================== Listar alumnos ===========================
+
+def listar_alumnos(tx: ManagedTransaction) -> List[str]:
+    """
+    Retorna la lista de nombres de todos los alumnos presentes en la base de datos.
+    """
+    query = """
+    MATCH (a:Alumno)
+    RETURN a.nombre AS nombre
+    ORDER BY a.nombre
+    """
+    result = tx.run(query)
+    return [str(record["nombre"]) for record in result if record.get("nombre")]
+
