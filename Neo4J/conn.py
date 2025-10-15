@@ -22,27 +22,34 @@ Buenas prácticas:
 """
 
 import os
+import logging
 from neo4j import GraphDatabase, Driver
 from dotenv import load_dotenv
 from contextlib import contextmanager
-from typing import Generator
+from typing import Generator, Optional
+
+# Setup logging
+logger = logging.getLogger(__name__)
 
 # === Cargar variables de entorno ===
 load_dotenv()
 
-URI = str(os.getenv("NEO4J_URI"))
-USER = str(os.getenv("NEO4J_USER"))
-PASSWORD = str(os.getenv("NEO4J_PASSWORD"))
+# Get and validate environment variables
+URI = os.getenv("NEO4J_URI")
+USER = os.getenv("NEO4J_USER")
+PASSWORD = os.getenv("NEO4J_PASSWORD")
 
 # Validación temprana: si faltan credenciales, detener ejecución
 if not URI or not USER or not PASSWORD:
-    raise EnvironmentError(
+    error_msg = (
         "❌ Faltan variables de entorno para Neo4j: "
         "NEO4J_URI, NEO4J_USER o NEO4J_PASSWORD"
     )
+    logger.error(error_msg)
+    raise EnvironmentError(error_msg)
 
 # Driver singleton (se inicializa solo una vez)
-_driver: Driver | None = None
+_driver: Optional[Driver] = None
 
 
 def obtener_driver() -> Driver:
@@ -54,10 +61,21 @@ def obtener_driver() -> Driver:
 
     Returns:
         neo4j.Driver: Instancia del driver de Neo4j.
+    
+    Raises:
+        Exception: Si la conexión falla durante la creación del driver.
     """
     global _driver
     if _driver is None:
-        _driver = GraphDatabase.driver(URI, auth=(USER, PASSWORD))
+        try:
+            _driver = GraphDatabase.driver(URI, auth=(USER, PASSWORD))  # type: ignore
+            # Verificación opcional de conexión
+            _driver.verify_connectivity()
+            logger.info("✅ Driver de Neo4j creado y conectado exitosamente.")
+        except Exception as e:
+            logger.error(f"❌ Error al crear el driver de Neo4j: {e}")
+            _driver = None
+            raise
     return _driver
 
 
@@ -74,12 +92,23 @@ def driver_context() -> Generator[Driver, None, None]:
                 result = session.run("MATCH (n) RETURN n LIMIT 5")
                 for row in result:
                     print(row)
+                    
+    Raises:
+        Exception: Si la creación del driver falla.
     """
-    driver = GraphDatabase.driver(URI, auth=(USER, PASSWORD))
+    driver: Optional[Driver] = None
     try:
+        driver = GraphDatabase.driver(URI, auth=(USER, PASSWORD))  # type: ignore
+        driver.verify_connectivity()
+        logger.debug("Driver temporal de Neo4j creado para contexto.")
         yield driver
+    except Exception as e:
+        logger.error(f"Error en driver_context: {e}")
+        raise
     finally:
-        driver.close()
+        if driver is not None:
+            driver.close()
+            logger.debug("Driver temporal de Neo4j cerrado.")
 
 
 def cerrar_driver() -> None:
@@ -92,3 +121,22 @@ def cerrar_driver() -> None:
     if _driver is not None:
         _driver.close()
         _driver = None
+        logger.info("Driver de Neo4j cerrado exitosamente.")
+
+
+def verificar_conexion() -> bool:
+    """
+    Verifica que la conexión a Neo4j esté funcionando.
+    
+    Returns:
+        bool: True si la conexión es exitosa, False en caso contrario.
+    """
+    try:
+        driver = obtener_driver()
+        with driver.session() as session:
+            result = session.run("RETURN 1 as test")
+            single_result = result.single()
+            return single_result is not None and single_result["test"] == 1
+    except Exception as e:
+        logger.error(f"Error verificando conexión: {e}")
+        return False

@@ -4,14 +4,7 @@ from neo4j import Driver
 from Neo4J.conn import obtener_driver
 
 
-# ------------------------
-# Consultas Cypher centralizadas
-# ------------------------
-
 def fetch_alumnos() -> List[Dict[str, str]]:
-    """
-    Devuelve la lista de alumnos con 'correo' y 'nombre' (ordenados por nombre).
-    """
     driver: Driver = obtener_driver()
     cypher: str = """
     MATCH (a:Alumno)
@@ -31,10 +24,7 @@ def fetch_alumnos() -> List[Dict[str, str]]:
         driver.close()
 
 
-def fetch_progreso_alumno_robust(correo: str) -> List[Dict[str, Any]]:
-    """
-    Versión más robusta con mejor manejo de tipos.
-    """
+def fetch_progreso_alumno(correo: str) -> List[Dict[str, Any]]:
     driver: Driver = obtener_driver()
     cypher: str = """
     MATCH (a:Alumno {correo: $correo})-[r]->(act)
@@ -50,13 +40,8 @@ def fetch_progreso_alumno_robust(correo: str) -> List[Dict[str, Any]]:
             progreso: List[Dict[str, Any]] = []
 
             for record in result:
-                # More robust type handling
-                raw_labels = record.get("labels")
-                if raw_labels is None:
-                    labels: List[str] = []
-                else:
-                    labels = [str(label) for label in raw_labels]
-                
+                # Add explicit type annotations
+                labels: List[str] = list(record.get("labels") or [])
                 tipo: str = labels[0] if labels else "Desconocido"
 
                 progreso.append({
@@ -75,11 +60,6 @@ def fetch_progreso_alumno_robust(correo: str) -> List[Dict[str, Any]]:
 
 
 def fetch_siguiente_por_avance(correo: str) -> Optional[Dict[str, Any]]:
-    """
-    Obtiene una actividad candidata cuando el alumno ya tiene 'Perfecto'
-    y se busca la siguiente actividad en la misma unidad o RAP que no esté completada.
-    Retorna un dict con 'tipo' y 'nombre', o None si no hay sugerencias.
-    """
     driver: Driver = obtener_driver()
     cypher: str = """
     MATCH (a:Alumno {correo:$correo})-[:Perfecto]->(act)
@@ -95,8 +75,8 @@ def fetch_siguiente_por_avance(correo: str) -> Optional[Dict[str, Any]]:
             if not record:
                 return None
 
-            # Fix: Add explicit type annotations
-            labels: List[str] = list(record["labels"] or [])
+            # Add explicit type annotations
+            labels: List[str] = list(record.get("labels") or [])
             tipo: str = labels[0] if labels else "Desconocido"
 
             return {"tipo": tipo, "nombre": record.get("nombre")}
