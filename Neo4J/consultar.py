@@ -1,112 +1,106 @@
-from neo4j import ManagedTransaction
-from typing import List, Optional, Mapping, Any, Dict
+# Neo4J/consultar.py
+from typing import List, Mapping, Any, Optional, Dict, Callable
 
-# ===================== Consulta de progreso ===========================
 
-def progreso_alumno(tx: ManagedTransaction, alumno_id: str) -> List[Mapping[str, Any]]:
+# Define type aliases for better clarity
+ActivityDict = Dict[str, Any]
+ProgressItem = Dict[str, Any]
+RecommendationResult = Optional[Dict[str, Any]]
+FetchNextFunction = Callable[[], Optional[ActivityDict]]
+
+
+def recomendar_siguiente_from_progress(progreso: List[Mapping[str, Any]]) -> RecommendationResult:
     """
-    Obtiene el estado de avance de un alumno sobre todas las actividades (Cuestionario, RAP, Ayudantía).
-
-    Retorna:
-        Lista de dicts con:
-            - tipo: tipo de nodo (ej. "Cuestionario", "RAP", "Ayudantia")
-            - nombre: nombre de la actividad
-            - estado: "Intento", "Completado" o "Perfecto"
+    Recibe la lista de progreso (cada item con 'tipo','nombre','estado',...) y devuelve:
+      {"estrategia": "refuerzo|mejora|avance", "actividad": {...}}
+    Reglas:
+      - Si hay 'Intento' -> refuerzo: sugerir repetir ese recurso (primero encontrado)
+      - Else si hay 'Completado' -> mejora: sugerir mejorar (primero encontrado)
+      - Else si hay 'Perfecto' -> avance: devuelve None (quedan que consultar con Neo4J para next)
     """
-    query = """
-    MATCH (a:Alumno {id:$alumno_id})-[r]->(act)
-    WHERE type(r) IN ["Intento", "Completado", "Perfecto"]
-    RETURN labels(act) AS tipo, act.nombre AS nombre, type(r) AS estado
-    """
-    result = tx.run(query, alumno_id=alumno_id)
-    return [dict(record) for record in result]
+    if not progreso:
+        return None
 
-# ===================== Estrategia de recomendación híbrida ===========================
-
-def recomendar_siguiente(tx: ManagedTransaction, alumno_id: str) -> Optional[Dict[str, Any]]:
-    """
-    Genera la recomendación de la siguiente actividad para un alumno según estrategia híbrida:
-        - Refuerzo: si tiene actividades iniciadas pero no completadas ("Intento")
-        - Mejora: si completó actividades pero no con 100% ("Completado")
-        - Avance: si tiene actividades perfectas ("Perfecto"), recomendar siguiente unidad/RAP disponible
-    """
-    progreso = progreso_alumno(tx, alumno_id)
-
-    # ----- Estrategia refuerzo -----
-    intentos = [p for p in progreso if p["estado"] == "Intento"]
+    # Fix: Remove explicit type annotation or use proper conversion
+    intentos = [dict(p) for p in progreso if p.get("estado") == "Intento"]
     if intentos:
         return {"estrategia": "refuerzo", "actividad": intentos[0]}
 
-    # ----- Estrategia mejora -----
-    completados = [p for p in progreso if p["estado"] == "Completado"]
+    completados = [dict(p) for p in progreso if p.get("estado") == "Completado"]
     if completados:
         return {"estrategia": "mejora", "actividad": completados[0]}
 
-    # ----- Estrategia avance -----
-    perfectos = [p for p in progreso if p["estado"] == "Perfecto"]
+    perfectos = [dict(p) for p in progreso if p.get("estado") == "Perfecto"]
     if perfectos:
-        query_avance = """
-        MATCH (a:Alumno {id:$alumno_id})-[:Perfecto]->(act)<-[:TIENE_RAP|:TIENE_CUESTIONARIO|:TIENE_AYUDANTIA]-(unidad:Unidad)
-        MATCH (unidad)-[:TIENE_RAP|:TIENE_CUESTIONARIO|:TIENE_AYUDANTIA]->(siguiente)
-        WHERE NOT (a)-[:Completado|:Perfecto]->(siguiente)
-        RETURN labels(siguiente) AS tipo, siguiente.nombre AS nombre
-        LIMIT 1
-        """
-        record = tx.run(query_avance, alumno_id=alumno_id).single()
-        if record:
-            return {"estrategia": "avance", "actividad": dict(record)}
+        # Para 'avance' devolvemos la señal; la resolución del siguiente recurso
+        # (buscar en el grafo) la hace el módulo de consultas Neo4J.
+        return {"estrategia": "avance", "actividad": perfectos[0]}
 
-    # ----- Si no hay nada que recomendar -----
     return None
 
-# ===================== Roadmap completo ===========================
 
-def generar_roadmap(tx: ManagedTransaction, alumno_id: str) -> List[Dict[str, Any]]:
+def generar_roadmap_from_progress_and_fetcher(
+    progreso: List[Mapping[str, Any]],
+    fetch_next_for_avance: FetchNextFunction
+) -> List[Dict[str, Any]]:
     """
-    Genera un roadmap completo de actividades recomendadas para el alumno,
-    simulando la progresión según la lógica híbrida sin modificar la DB.
+    Genera un roadmap en memoria a partir del progreso inicial.
+    `fetch_next_for_avance` es una función (correo) -> next_activity_dict o None
+    que se invoca cuando la estrategia es 'avance' y necesitamos consultar el grafo
+    para obtener la siguiente actividad disponible.
+    NOTA: No modifica la DB.
     """
     roadmap: List[Dict[str, Any]] = []
-    vistos: set[str] = set()
+    # Fix: Add explicit type annotation for the set
+    seen: set[tuple[Optional[str], Optional[str], str]] = set()
+
+    # copia en memoria para simular progresos que vamos cambiando
+    prog_map: Dict[tuple[Optional[str], Optional[str]], ActivityDict] = {
+        (p.get("tipo"), p.get("nombre")): dict(p) for p in progreso 
+    }
 
     while True:
-        recomendacion = recomendar_siguiente(tx, alumno_id)
-        if not recomendacion:
+        rec = recomendar_siguiente_from_progress(list(prog_map.values()))
+        if not rec:
             break
 
-        # Crear identificador temporal para evitar ciclos
-        act = recomendacion['actividad']
-        act_id = f"{act.get('nombre')}-{recomendacion['estrategia']}"
-        if act_id in vistos:
+        estrategia: str = rec["estrategia"]
+        actividad: ActivityDict = rec["actividad"]
+
+        # Si avance, necesitarás resolver la siguiente actividad en el grafo
+        if estrategia == "avance":
+            # fetch_next_for_avance debe devolver {"tipo":.., "nombre":..} o None
+            siguiente: Optional[ActivityDict] = fetch_next_for_avance()
+            if not siguiente:
+                break
+            # usar siguiente como la actividad a añadir
+            actividad = siguiente
+
+        # Fix: Add explicit type annotations and handle potential None values
+        act_tipo: Optional[str] = actividad.get("tipo")
+        act_nombre: Optional[str] = actividad.get("nombre")
+        act_key: tuple[Optional[str], Optional[str], str] = (act_tipo, act_nombre, estrategia)
+        
+        if act_key in seen:
             break
-        vistos.add(act_id)
+        seen.add(act_key)
+        roadmap.append({"estrategia": estrategia, "actividad": actividad})
 
-        roadmap.append(recomendacion)
-
-        # Simular actualización de progreso en memoria
-        # Esto evita múltiples llamadas al mismo nodo en el roadmap
-        # NOTA: no modifica la DB
-        if recomendacion['estrategia'] == 'refuerzo':
-            act['estado'] = 'Completado'
-        elif recomendacion['estrategia'] == 'mejora':
-            act['estado'] = 'Perfecto'
+        # simular avance en prog_map
+        prog_key: tuple[Optional[str], Optional[str]] = (act_tipo, act_nombre)
+        if prog_key in prog_map:
+            if estrategia == "refuerzo":
+                prog_map[prog_key]["estado"] = "Completado"
+            elif estrategia == "mejora":
+                prog_map[prog_key]["estado"] = "Perfecto"
+            else:
+                prog_map[prog_key]["estado"] = "Perfecto"
         else:
-            # Para 'avance' simulamos que la actividad fue completada
-            act['estado'] = 'Perfecto'
+            # si no existía, añadir como completado (simulado)
+            prog_map[prog_key] = {
+                "tipo": act_tipo, 
+                "nombre": act_nombre, 
+                "estado": "Completado"
+            }
 
     return roadmap
-
-# ===================== Listar alumnos ===========================
-
-def listar_alumnos(tx: ManagedTransaction) -> List[str]:
-    """
-    Retorna la lista de nombres de todos los alumnos presentes en la base de datos.
-    """
-    query = """
-    MATCH (a:Alumno)
-    RETURN a.nombre AS nombre
-    ORDER BY a.nombre
-    """
-    result = tx.run(query)
-    return [str(record["nombre"]) for record in result if record.get("nombre")]
-
