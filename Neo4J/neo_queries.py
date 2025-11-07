@@ -1,9 +1,20 @@
 # Neo4J/neo_queries.py
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Callable, cast
 from neo4j import Driver
 from Neo4J.conn import obtener_driver
 
+# Define type aliases for better clarity
+ActivityDict = Dict[str, Any]
+ProgressItem = Dict[str, Any]
+RecommendationResult = Optional[Dict[str, Any]]
+FetchNextFunction = Callable[[], Optional[ActivityDict]]
+
+# ============================================================================
+# FUNCIONES DE CONSULTA BÁSICAS
+# ============================================================================
+
 def fetch_alumnos() -> List[Dict[str, str]]:
+    """Obtiene lista de todos los alumnos"""
     driver: Driver = obtener_driver()
     cypher: str = """
     MATCH (a:Alumno)
@@ -23,10 +34,12 @@ def fetch_alumnos() -> List[Dict[str, str]]:
         driver.close()
 
 def fetch_progreso_alumno(correo: str) -> List[Dict[str, Any]]:
+    """Obtiene el progreso completo de un alumno EXCLUYENDO RAPs"""
     driver: Driver = obtener_driver()
     cypher: str = """
     MATCH (a:Alumno {correo: $correo})-[r]->(act)
     WHERE type(r) IN ["Intento","Completado","Perfecto"]
+    AND NOT 'RAP' IN labels(act)  // EXCLUIR RAPs
     RETURN labels(act) AS labels, act.nombre AS nombre,
            type(r) AS estado_relacion,
            r.start AS start, r.end AS end, r.duration_seconds AS duration_seconds,
@@ -55,51 +68,128 @@ def fetch_progreso_alumno(correo: str) -> List[Dict[str, Any]]:
     finally:
         driver.close()
 
-def fetch_siguiente_por_avance_mejorada(correo: str) -> Optional[Dict[str, Any]]:
+# ============================================================================
+# FUNCIONES DE RECOMENDACIÓN Y ROADMAP (EXCLUYENDO RAPs)
+# ============================================================================
+
+def fetch_recomendacion_siguiente(progreso: List[ProgressItem]) -> RecommendationResult:
     """
-    VERSIÓN MEJORADA - Encuentra siguiente actividad de forma más flexible
-    Los RAPs siempre están disponibles para recomendación
+    Recibe la lista de progreso y devuelve recomendación de siguiente actividad
+    EXCLUYENDO RAPs completamente
+    """
+    if not progreso:
+        return None
+
+    # Ya no necesitamos filtrar RAPs porque fetch_progreso_alumno ya los excluye
+    intentos = [p for p in progreso if p.get("estado") == "Intento"]
+    if intentos:
+        return {"estrategia": "refuerzo", "actividad": intentos[0]}
+
+    completados = [p for p in progreso if p.get("estado") == "Completado"]
+    if completados:
+        return {"estrategia": "mejora", "actividad": completados[0]}
+
+    perfectos = [p for p in progreso if p.get("estado") == "Perfecto"]
+    if perfectos:
+        return {"estrategia": "avance", "actividad": perfectos[0]}
+
+    return None
+
+def fetch_roadmap_desde_progreso(
+    progreso: List[ProgressItem],
+    fetch_next_for_avance: FetchNextFunction
+) -> List[Dict[str, Any]]:
+    """
+    Genera un roadmap en memoria a partir del progreso inicial.
+    EXCLUYENDO RAPs completamente del roadmap
+    """
+    roadmap: List[Dict[str, Any]] = []
+    seen: set[tuple[Optional[str], Optional[str], str]] = set()
+
+    # copia en memoria para simular progresos (ya excluye RAPs por fetch_progreso_alumno)
+    prog_map: Dict[tuple[Optional[str], Optional[str]], ActivityDict] = {}
+    for p in progreso:
+        key = (p.get("tipo"), p.get("nombre"))
+        prog_map[key] = p
+
+    while True:
+        rec = fetch_recomendacion_siguiente(list(prog_map.values()))
+        if not rec:
+            break
+
+        estrategia = rec["estrategia"]
+        actividad = cast(ActivityDict, rec["actividad"])
+
+        # Si avance, necesitarás resolver la siguiente actividad en el grafo
+        if estrategia == "avance":
+            siguiente = fetch_next_for_avance()
+            if not siguiente:
+                break
+            actividad = siguiente
+
+        # Extract variables to help with type inference
+        act_tipo = actividad.get("tipo")
+        act_nombre = actividad.get("nombre")
+        act_key = (act_tipo, act_nombre, estrategia)
+        
+        if act_key in seen:
+            break
+        seen.add(act_key)
+        roadmap.append({"estrategia": estrategia, "actividad": actividad})
+
+        # simular avance en prog_map
+        prog_key = (act_tipo, act_nombre)
+        if prog_key in prog_map:
+            if estrategia == "refuerzo":
+                prog_map[prog_key]["estado"] = "Completado"
+            elif estrategia == "mejora":
+                prog_map[prog_key]["estado"] = "Perfecto"
+            else:
+                prog_map[prog_key]["estado"] = "Perfecto"
+        else:
+            prog_map[prog_key] = {
+                "tipo": act_tipo, 
+                "nombre": act_nombre, 
+                "estado": "Completado"
+            }
+
+    return roadmap
+
+# ============================================================================
+# FUNCIONES DE ACTIVIDADES SIGUIENTES (EXCLUYENDO RAPs)
+# ============================================================================
+
+def fetch_siguiente_actividad_mejorada(correo: str) -> Optional[Dict[str, Any]]:
+    """
+    Encuentra siguiente actividad EXCLUYENDO RAPs completamente
     """
     driver: Driver = obtener_driver()
     
     cypher: str = """
-    // ESTRATEGIA MEJORADA - Los RAPs siempre disponibles para roadmap
-    
+    // ESTRATEGIA MEJORADA - EXCLUIR RAPs completamente
     MATCH (a:Alumno {correo: $correo})
     
-    // 1. Buscar última actividad del alumno (excluyendo RAPs para determinar unidad)
+    // Buscar última actividad del alumno (excluyendo RAPs)
     OPTIONAL MATCH (a)-[r:Intento|Completado|Perfecto]->(ultima_act)
     WHERE NOT 'RAP' IN labels(ultima_act)
     WITH a, ultima_act
     ORDER BY r.end DESC
     LIMIT 1
     
-    // 2. Si hay última actividad, buscar su unidad
-    OPTIONAL MATCH (unidad_ultima:Unidad)-[:TIENE_RAP|TIENE_CUESTIONARIO|TIENE_AYUDANTIA]->(ultima_act)
+    // Buscar su unidad
+    OPTIONAL MATCH (unidad_ultima:Unidad)-[:TIENE_CUESTIONARIO|TIENE_AYUDANTIA]->(ultima_act)
     
-    // 3. Buscar actividades en esta unidad (RAPs siempre disponibles)
-    OPTIONAL MATCH (unidad_ultima)-[:TIENE_RAP|TIENE_CUESTIONARIO|TIENE_AYUDANTIA]->(siguiente_misma_unidad)
+    // Buscar actividades en esta unidad (EXCLUYENDO RAPs)
+    OPTIONAL MATCH (unidad_ultima)-[:TIENE_CUESTIONARIO|TIENE_AYUDANTIA]->(siguiente_misma_unidad)
     WHERE siguiente_misma_unidad IS NOT NULL 
-      AND (
-        // RAPs: siempre disponibles para el roadmap
-        'RAP' IN labels(siguiente_misma_unidad)
-        OR 
-        // Cuestionarios/Ayudantias: solo si no están completados/perfectos
-        (NOT 'RAP' IN labels(siguiente_misma_unidad) 
-         AND NOT (a)-[:Completado|Perfecto]->(siguiente_misma_unidad))
-      )
+      AND NOT 'RAP' IN labels(siguiente_misma_unidad)  // EXCLUIR RAPs
+      AND NOT (a)-[:Completado|Perfecto]->(siguiente_misma_unidad)
     
-    // 4. Si no hay en la misma unidad, buscar en cualquier unidad
-    OPTIONAL MATCH (cualquier_unidad:Unidad)-[:TIENE_RAP|TIENE_CUESTIONARIO|TIENE_AYUDANTIA]->(siguiente_cualquier)
+    // Si no hay en la misma unidad, buscar en cualquier unidad (EXCLUYENDO RAPs)
+    OPTIONAL MATCH (cualquier_unidad:Unidad)-[:TIENE_CUESTIONARIO|TIENE_AYUDANTIA]->(siguiente_cualquier)
     WHERE siguiente_cualquier IS NOT NULL 
-      AND (
-        // RAPs: siempre disponibles
-        'RAP' IN labels(siguiente_cualquier)
-        OR 
-        // Cuestionarios/Ayudantias: solo si no están completados/perfectos
-        (NOT 'RAP' IN labels(siguiente_cualquier) 
-         AND NOT (a)-[:Completado|Perfecto]->(siguiente_cualquier))
-      )
+      AND NOT 'RAP' IN labels(siguiente_cualquier)  // EXCLUIR RAPs
+      AND NOT (a)-[:Completado|Perfecto]->(siguiente_cualquier)
     
     WITH 
         siguiente_misma_unidad AS candidato1,
@@ -109,7 +199,7 @@ def fetch_siguiente_por_avance_mejorada(correo: str) -> Optional[Dict[str, Any]]
             ELSE 2
         END AS prioridad
     
-    // 5. Elegir el mejor candidato y priorizar por tipo (RAPs primero)
+    // Elegir el mejor candidato
     WITH coalesce(candidato1, candidato2) AS siguiente, prioridad
     
     WHERE siguiente IS NOT NULL
@@ -117,14 +207,8 @@ def fetch_siguiente_por_avance_mejorada(correo: str) -> Optional[Dict[str, Any]]
     RETURN 
         labels(siguiente) AS labels, 
         siguiente.nombre AS nombre,
-        prioridad,
-        CASE 
-            WHEN 'RAP' IN labels(siguiente) THEN 1
-            WHEN 'Cuestionario' IN labels(siguiente) THEN 2
-            WHEN 'Ayudantia' IN labels(siguiente) THEN 3
-            ELSE 4
-        END AS prioridad_tipo
-    ORDER BY prioridad, prioridad_tipo
+        prioridad
+    ORDER BY prioridad
     LIMIT 1
     """
     
@@ -140,39 +224,24 @@ def fetch_siguiente_por_avance_mejorada(correo: str) -> Optional[Dict[str, Any]]
             return {
                 "tipo": tipo, 
                 "nombre": record.get("nombre"),
-                "prioridad": record.get("prioridad"),
-                "prioridad_tipo": record.get("prioridad_tipo")
+                "prioridad": record.get("prioridad")
             }
     finally:
         driver.close()
 
 def fetch_siguiente_actividad_simple(correo: str) -> Optional[Dict[str, Any]]:
     """
-    VERSIÓN SIMPLE - Para cuando falla la query compleja
-    Los RAPs siempre disponibles para roadmap
+    VERSIÓN SIMPLE - EXCLUYENDO RAPs completamente
     """
     driver: Driver = obtener_driver()
     
     cypher: str = """
-    // QUERY SIMPLE: RAPs siempre disponibles, otros solo si no completados
+    // QUERY SIMPLE: EXCLUIR RAPs completamente
     MATCH (a:Alumno {correo: $correo})
-    MATCH (siguiente:RAP|Cuestionario|Ayudantia)
-    WHERE 
-        'RAP' IN labels(siguiente)
-        OR 
-        (NOT 'RAP' IN labels(siguiente) 
-         AND NOT (a)-[:Completado|Perfecto]->(siguiente))
-    
-    WITH siguiente,
-         CASE 
-           WHEN 'RAP' IN labels(siguiente) THEN 1
-           WHEN 'Cuestionario' IN labels(siguiente) THEN 2
-           WHEN 'Ayudantia' IN labels(siguiente) THEN 3
-           ELSE 4
-         END AS prioridad
-    
+    MATCH (siguiente:Cuestionario|Ayudantia)  // Solo Cuestionarios y Ayudantias
+    WHERE NOT (a)-[:Completado|Perfecto]->(siguiente)
     RETURN labels(siguiente) AS labels, siguiente.nombre AS nombre
-    ORDER BY prioridad, siguiente.nombre
+    ORDER BY siguiente.nombre
     LIMIT 1
     """
     
@@ -189,133 +258,18 @@ def fetch_siguiente_actividad_simple(correo: str) -> Optional[Dict[str, Any]]:
     finally:
         driver.close()
 
-# Mantener la original por compatibilidad
-def fetch_siguiente_por_avance(correo: str) -> Optional[Dict[str, Any]]:
-    """Versión original (puede ser eliminada luego)"""
+# Alias para compatibilidad
+def fetch_siguiente_actividad(correo: str) -> Optional[Dict[str, Any]]:
+    """Alias para mantener compatibilidad"""
     return fetch_siguiente_actividad_simple(correo)
 
-# Neo4J/consultar.py
-from typing import List, Any, Optional, Dict, Callable, cast
+# ============================================================================
+# FUNCIONES DE ESTADÍSTICAS Y ANÁLISIS (EXCLUYENDO RAPs)
+# ============================================================================
 
-
-# Define type aliases for better clarity
-ActivityDict = Dict[str, Any]
-ProgressItem = Dict[str, Any]
-RecommendationResult = Optional[Dict[str, Any]]
-FetchNextFunction = Callable[[], Optional[ActivityDict]]
-
-
-def recomendar_siguiente_from_progress(progreso: List[ProgressItem]) -> RecommendationResult:
+def fetch_estadisticas_globales() -> Dict[str, Dict[str, Dict[str, Any]]]:
     """
-    Recibe la lista de progreso (cada item con 'tipo','nombre','estado',...) y devuelve:
-      {"estrategia": "refuerzo|mejora|avance", "actividad": {...}}
-    Reglas:
-      - Si hay 'Intento' -> refuerzo: sugerir repetir ese recurso (primero encontrado)
-      - Else si hay 'Completado' -> mejora: sugerir mejorar (primero encontrado)
-      - Else si hay 'Perfecto' -> avance: devuelve None (quedan que consultar con Neo4J para next)
-    """
-    if not progreso:
-        return None
-
-    # Excluir RAPs de la lógica de refuerzo/mejora
-    progreso_filtrado = [p for p in progreso if p.get("tipo") != "RAP"]
-    
-    if not progreso_filtrado:
-        return None
-
-    intentos = [p for p in progreso_filtrado if p.get("estado") == "Intento"]
-    if intentos:
-        return {"estrategia": "refuerzo", "actividad": intentos[0]}
-
-    completados = [p for p in progreso_filtrado if p.get("estado") == "Completado"]
-    if completados:
-        return {"estrategia": "mejora", "actividad": completados[0]}
-
-    perfectos = [p for p in progreso_filtrado if p.get("estado") == "Perfecto"]
-    if perfectos:
-        # Para 'avance' devolvemos la señal; la resolución del siguiente recurso
-        # (buscar en el grafo) la hace el módulo de consultas Neo4J.
-        return {"estrategia": "avance", "actividad": perfectos[0]}
-
-    return None
-
-
-def generar_roadmap_from_progress_and_fetcher(
-    progreso: List[ProgressItem],
-    fetch_next_for_avance: FetchNextFunction
-) -> List[Dict[str, Any]]:
-    """
-    Genera un roadmap en memoria a partir del progreso inicial.
-    `fetch_next_for_avance` es una función que devuelve next_activity_dict o None
-    que se invoca cuando la estrategia es 'avance' y necesitamos consultar el grafo
-    para obtener la siguiente actividad disponible.
-    NOTA: No modifica la DB.
-    """
-    roadmap: List[Dict[str, Any]] = []
-    seen: set[tuple[Optional[str], Optional[str], str]] = set()
-
-    # copia en memoria para simular progresos que vamos cambiando
-    # Incluimos RAPs en el roadmap pero con lógica diferente
-    prog_map: Dict[tuple[Optional[str], Optional[str]], ActivityDict] = {}
-    for p in progreso:
-        key = (p.get("tipo"), p.get("nombre"))
-        prog_map[key] = p
-
-    while True:
-        rec = recomendar_siguiente_from_progress(list(prog_map.values()))
-        if not rec:
-            break
-
-        estrategia = rec["estrategia"]
-        # Use cast to help Pylance understand the type
-        actividad = cast(ActivityDict, rec["actividad"])
-
-        # Si avance, necesitarás resolver la siguiente actividad en el grafo
-        if estrategia == "avance":
-            # fetch_next_for_avance debe devolver {"tipo":.., "nombre":..} o None
-            siguiente = fetch_next_for_avance()
-            if not siguiente:
-                break
-            # usar siguiente como la actividad a añadir
-            actividad = siguiente
-
-        # Extract variables to help with type inference
-        act_tipo = actividad.get("tipo")
-        act_nombre = actividad.get("nombre")
-        act_key = (act_tipo, act_nombre, estrategia)
-        
-        if act_key in seen:
-            break
-        seen.add(act_key)
-        roadmap.append({"estrategia": estrategia, "actividad": actividad})
-
-        # simular avance en prog_map (para RAPs no cambiamos el estado)
-        prog_key = (act_tipo, act_nombre)
-        if prog_key in prog_map:
-            if act_tipo != "RAP":  # Solo actualizamos estado para no-RAPs
-                if estrategia == "refuerzo":
-                    prog_map[prog_key]["estado"] = "Completado"
-                elif estrategia == "mejora":
-                    prog_map[prog_key]["estado"] = "Perfecto"
-                else:
-                    prog_map[prog_key]["estado"] = "Perfecto"
-        else:
-            # si no existía, añadir (para RAPs mantenemos estado neutro)
-            nuevo_estado = "Completado" if act_tipo != "RAP" else "Visto"
-            prog_map[prog_key] = {
-                "tipo": act_tipo, 
-                "nombre": act_nombre, 
-                "estado": nuevo_estado
-            }
-
-    return roadmap
-
-# NUEVAS FUNCIONES CON TIPOS CORREGIDOS - Agregar al final de neo_queries.py
-
-def fetch_estadisticas_globales_actividades() -> Dict[str, Dict[str, Dict[str, Any]]]:
-    """
-    Obtiene estadísticas globales de todas las actividades con tiempos
-    EXCLUYENDO RAPs de las estadísticas
+    Obtiene estadísticas globales EXCLUYENDO RAPs completamente
     """
     driver: Driver = obtener_driver()
     
@@ -357,10 +311,9 @@ def fetch_estadisticas_globales_actividades() -> Dict[str, Dict[str, Dict[str, A
     finally:
         driver.close()
 
-def fetch_estadisticas_alumno_avanzadas(correo: str) -> Dict[str, Any]:
+def fetch_estadisticas_alumno(correo: str) -> Dict[str, Any]:
     """
-    Obtiene estadísticas avanzadas de un alumno específico con tiempos
-    EXCLUYENDO RAPs de las estadísticas
+    Obtiene estadísticas de un alumno EXCLUYENDO RAPs completamente
     """
     driver: Driver = obtener_driver()
     
@@ -385,7 +338,6 @@ def fetch_estadisticas_alumno_avanzadas(correo: str) -> Dict[str, Any]:
         with driver.session() as session:
             result = session.run(cypher, correo=correo)
             
-            # Definir tipos explícitos
             actividades_dict: Dict[str, Dict[str, Any]] = {}
             resumen_dict: Dict[str, Any] = {
                 "total_actividades": 0,
@@ -415,13 +367,11 @@ def fetch_estadisticas_alumno_avanzadas(correo: str) -> Dict[str, Any]:
                 }
                 actividad["intentos"].append(intento_data)
                 
-                # Actualizar mejor puntaje y estado final
                 puntaje_actual: Any = record["puntaje"]
                 if puntaje_actual and puntaje_actual > actividad["mejor_puntaje"]:
                     actividad["mejor_puntaje"] = puntaje_actual
                     actividad["estado_final"] = record["estado"]
                 
-                # Estadísticas generales
                 duracion_actual: Any = record["duracion"]
                 if duracion_actual:
                     resumen_dict["total_tiempo_segundos"] += duracion_actual
@@ -436,10 +386,10 @@ def fetch_estadisticas_alumno_avanzadas(correo: str) -> Dict[str, Any]:
     finally:
         driver.close()
 
-def verificar_alumno_todo_perfecto(correo: str) -> bool:
+def fetch_verificar_alumno_perfecto(correo: str) -> bool:
     """
     Verifica si un alumno tiene todas sus actividades en estado Perfecto
-    EXCLUYENDO RAPs de la verificación
+    EXCLUYENDO RAPs completamente
     """
     driver: Driver = obtener_driver()
     
@@ -461,3 +411,83 @@ def verificar_alumno_todo_perfecto(correo: str) -> bool:
             return record["todo_perfecto"] if record else False
     finally:
         driver.close()
+
+def fetch_actividades_lentas_alumno(correo: str) -> List[Dict[str, Any]]:
+    """
+    Obtiene las actividades donde el alumno es más lento que el promedio
+    EXCLUYENDO RAPs completamente
+    """
+    driver: Driver = obtener_driver()
+    
+    cypher: str = """
+    // Obtener estadísticas del alumno vs globales (EXCLUYENDO RAPs)
+    MATCH (a:Alumno {correo: $correo})-[r:Intento|Completado|Perfecto]->(act)
+    WHERE r.duration_seconds IS NOT NULL 
+    AND r.duration_seconds > 0
+    AND NOT 'RAP' IN labels(act)
+    
+    WITH labels(act)[0] as tipo, act.nombre as nombre_actividad,
+         AVG(r.duration_seconds) as tiempo_promedio_alumno,
+         COUNT(r) as intentos_alumno
+    
+    // Obtener estadísticas globales para comparar
+    MATCH (global_alumno:Alumno)-[r_global:Intento|Completado|Perfecto]->(act_global)
+    WHERE labels(act_global)[0] = tipo 
+    AND act_global.nombre = nombre_actividad
+    AND r_global.duration_seconds IS NOT NULL
+    AND r_global.duration_seconds > 0
+    AND NOT 'RAP' IN labels(act_global)
+    
+    WITH tipo, nombre_actividad, tiempo_promedio_alumno, intentos_alumno,
+         AVG(r_global.duration_seconds) as tiempo_promedio_global,
+         COUNT(r_global) as intentos_global
+    
+    WHERE intentos_global >= 3  // Solo considerar actividades con suficiente data global
+    AND tiempo_promedio_alumno > tiempo_promedio_global  // Solo donde el alumno es más lento
+    
+    RETURN 
+        tipo,
+        nombre_actividad,
+        tiempo_promedio_alumno,
+        tiempo_promedio_global,
+        intentos_alumno,
+        intentos_global,
+        ((tiempo_promedio_alumno - tiempo_promedio_global) / tiempo_promedio_global) * 100 as diferencia_porcentual
+    
+    ORDER BY diferencia_porcentual DESC  // Más lentas primero
+    LIMIT 10  // Top 10 actividades más lentas
+    """
+    
+    try:
+        with driver.session() as session:
+            result = session.run(cypher, correo=correo)
+            actividades_lentas: List[Dict[str, Any]] = []
+            
+            for record in result:
+                actividad: Dict[str, Any] = {
+                    "tipo": record["tipo"],
+                    "nombre": record["nombre_actividad"],
+                    "tiempo_promedio_alumno": record["tiempo_promedio_alumno"],
+                    "tiempo_promedio_global": record["tiempo_promedio_global"],
+                    "intentos_alumno": record["intentos_alumno"],
+                    "intentos_global": record["intentos_global"],
+                    "diferencia_porcentual": record["diferencia_porcentual"],
+                    "eficiencia": "MUY_LENTO" if record["diferencia_porcentual"] > 30 else "LENTO"
+                }
+                actividades_lentas.append(actividad)
+            
+            return actividades_lentas
+    finally:
+        driver.close()
+
+__all__ = [
+    'fetch_alumnos',
+    'fetch_progreso_alumno', 
+    'fetch_siguiente_actividad',
+    'fetch_siguiente_actividad_mejorada',
+    'fetch_siguiente_actividad_simple',
+    'fetch_estadisticas_globales',
+    'fetch_estadisticas_alumno',
+    'fetch_verificar_alumno_perfecto',
+    'fetch_actividades_lentas_alumno'
+]

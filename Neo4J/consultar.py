@@ -1,5 +1,5 @@
 # Neo4J/consultar.py
-from typing import List, Any, Optional, Dict, Callable, cast
+from typing import List, Any, Optional, Dict, Callable, Tuple
 
 
 # Define type aliases for better clarity
@@ -54,143 +54,160 @@ def recomendar_siguiente_from_progress(progreso: List[ProgressItem]) -> Recommen
 def generar_roadmap_from_progress_and_fetcher(
     progreso: List[ProgressItem],
     fetch_next_for_avance: FetchNextFunction,
-    actividades_lentas: Optional[List[Dict[str, Any]]] = None
+    actividades_lentas: Optional[List[ActivityDict]] = None
 ) -> List[Dict[str, Any]]:
     """
-    Genera un roadmap en memoria donde:
-    - Cada actividad aparece UNA SOLA VEZ con su categoría más prioritaria
-    - Los RAPs están EXCLUIDOS completamente del roadmap
-    - Orden de prioridad: NUEVAS → REFUERZO → MEJORA → REFUERZO_TIEMPO
+    Genera un roadmap en memoria con JERARQUÍA DE PRIORIDADES:
+    1. 🚀 NUEVAS ACTIVIDADES (no en progreso)
+    2. 🔄 ACTIVIDADES EN INTENTO (no terminadas)
+    3. 📈 ACTIVIDADES PARA MEJORAR (Completado → Perfecto) 
+    4. ⏰ ACTIVIDADES PARA MEJORAR TIEMPO (Completadas/Perfectas lentas)
     """
     roadmap: List[Dict[str, Any]] = []
-    actividades_vistas: set[tuple[Optional[str], Optional[str]]] = set()
+    actividades_vistas: set[Tuple[Optional[str], Optional[str]]] = set()
     
     # Copia en memoria para simular progresos (excluyendo RAPs)
-    prog_map: Dict[tuple[Optional[str], Optional[str]], ActivityDict] = {}
+    prog_map: Dict[Tuple[Optional[str], Optional[str]], ActivityDict] = {}
     for p in progreso:
         if p.get("tipo") != "RAP":  # Excluir RAPs del progreso simulado
             key = (p.get("tipo"), p.get("nombre"))
             prog_map[key] = p
 
+    # Preparar actividades por categorías según la jerarquía
+    actividades_intento: List[ActivityDict] = []
+    actividades_mejora: List[ActivityDict] = []
+    actividades_lentas_activas: List[ActivityDict] = []
+    
+    # Clasificar actividades existentes
+    for actividad in prog_map.values():
+        estado = actividad.get("estado")
+        act_key = (actividad.get("tipo"), actividad.get("nombre"))
+        
+        if estado == "Intento" and act_key not in actividades_vistas:
+            actividades_intento.append(actividad)
+        elif estado == "Completado" and act_key not in actividades_vistas:
+            actividades_mejora.append(actividad)
+    
+    # Preparar actividades lentas - SOLO para actividades Completadas o Perfectas
+    if actividades_lentas:
+        for act_lenta in actividades_lentas:
+            act_tipo: Optional[str] = act_lenta.get("tipo")
+            act_nombre: Optional[str] = act_lenta.get("nombre")
+            act_key = (act_tipo, act_nombre)
+            
+            # SOLO incluir actividades lentas que están en estado Completado o Perfecto
+            if (act_key in prog_map and 
+                prog_map[act_key].get("estado") in ["Completado", "Perfecto"] and
+                act_key not in actividades_vistas):
+                actividades_lentas_activas.append(act_lenta)
+        
+        # Ordenar por diferencia porcentual (más lentas primero)
+        actividades_lentas_activas.sort(
+            key=lambda x: x.get('diferencia_porcentual', 0), 
+            reverse=True
+        )
+
     # Función auxiliar para obtener siguiente actividad no-RAP
-    def obtener_siguiente_no_rap() -> Optional[Dict[str, Any]]:
+    def obtener_siguiente_no_rap() -> Optional[ActivityDict]:
         siguiente = fetch_next_for_avance()
         while siguiente and siguiente.get("tipo") == "RAP":
             siguiente = fetch_next_for_avance()
         return siguiente
 
-    # Función auxiliar para obtener siguiente actividad lenta (menos eficiente primero)
-    def obtener_siguiente_lenta() -> Optional[Dict[str, Any]]:
-        if not actividades_lentas:
-            return None
-        # Ordenar por diferencia porcentual (menos eficiente primero)
-        actividades_lentas_ordenadas = sorted(
-            actividades_lentas,
-            key=lambda x: x.get('diferencia_porcentual', 0),
-            reverse=True  # Mayor diferencia primero (menos eficiente)
-        )
-        for act_lenta in actividades_lentas_ordenadas:
-            if act_lenta.get("tipo") != "RAP":
-                act_key = (act_lenta.get("tipo"), act_lenta.get("nombre"))
-                if act_key not in actividades_vistas:
-                    return act_lenta
-        return None
-
-    # CASO 1: Alumno sin progreso - empezar con primera actividad no-RAP
+    # ========== JERARQUÍA DE PRIORIDADES ==========
+    
+    max_actividades = 15  # Límite razonable para el roadmap
+    
+    # 1. 🚀 NUEVAS ACTIVIDADES (si no hay progreso)
     if not prog_map:
         siguiente = obtener_siguiente_no_rap()
         if siguiente:
-            act_key = (siguiente.get("tipo"), siguiente.get("nombre"))
+            act_tipo: Optional[str] = siguiente.get("tipo")
+            act_nombre: Optional[str] = siguiente.get("nombre")
+            act_key = (act_tipo, act_nombre)
             actividades_vistas.add(act_key)
             roadmap.append({
                 "estrategia": "nuevas", 
                 "actividad": siguiente,
-                "motivo": "Primera actividad recomendada"
+                "motivo": "Comienza tu journey de aprendizaje"
             })
         return roadmap
 
-    # CASO 2: Alumno con progreso - generar roadmap según prioridades
-    max_iteraciones = 30
-    iteracion = 0
-    
-    while iteracion < max_iteraciones:
-        iteracion += 1
+    # 2. 🔄 ACTIVIDADES EN INTENTO (prioridad máxima)
+    for actividad in actividades_intento:
+        if len(roadmap) >= max_actividades:
+            break
+            
+        act_tipo = actividad.get("tipo")
+        act_nombre = actividad.get("nombre")
+        act_key = (act_tipo, act_nombre)
         
-        # Obtener recomendación basada en progreso simulado
-        rec = recomendar_siguiente_from_progress(list(prog_map.values()))
-        if not rec:
-            # Si no hay más recomendaciones del progreso, intentar refuerzo de tiempo
-            actividad_lenta = obtener_siguiente_lenta()
-            if actividad_lenta:
-                act_key = (actividad_lenta.get("tipo"), actividad_lenta.get("nombre"))
-                actividades_vistas.add(act_key)
-                diferencia = actividad_lenta.get('diferencia_porcentual', 0)
-                roadmap.append({
-                    "estrategia": "refuerzo_tiempo",
-                    "actividad": actividad_lenta,
-                    "motivo": f"Refuerzo recomendado - Tiempo +{diferencia:.1f}% vs promedio"
-                })
-                # Continuar para ver si hay más actividades lentas
-                continue
-            else:
-                break  # No hay más actividades de ningún tipo
+        if act_key not in actividades_vistas:
+            actividades_vistas.add(act_key)
+            roadmap.append({
+                "estrategia": "refuerzo",
+                "actividad": actividad,
+                "motivo": "Terminar actividad pendiente"
+            })
 
-        estrategia = rec["estrategia"]
-        actividad = cast(ActivityDict, rec["actividad"])
+    # 3. 📈 ACTIVIDADES PARA MEJORAR (Completado → Perfecto)
+    for actividad in actividades_mejora:
+        if len(roadmap) >= max_actividades:
+            break
+            
+        act_tipo = actividad.get("tipo")
+        act_nombre = actividad.get("nombre")
+        act_key = (act_tipo, act_nombre)
+        
+        if act_key not in actividades_vistas:
+            actividades_vistas.add(act_key)
+            roadmap.append({
+                "estrategia": "mejora", 
+                "actividad": actividad,
+                "motivo": "Buscar calificación perfecta"
+            })
 
-        # Manejar estrategia "nuevas" - buscar actividades no realizadas
-        if estrategia == "nuevas":
+    # 4. ⏰ ACTIVIDADES PARA MEJORAR TIEMPO (Completadas/Perfectas lentas)
+    for actividad_lenta in actividades_lentas_activas:
+        if len(roadmap) >= max_actividades:
+            break
+            
+        act_tipo = actividad_lenta.get("tipo")
+        act_nombre = actividad_lenta.get("nombre")
+        act_key = (act_tipo, act_nombre)
+        
+        if act_key not in actividades_vistas:
+            actividades_vistas.add(act_key)
+            diferencia = actividad_lenta.get('diferencia_porcentual', 0)
+            roadmap.append({
+                "estrategia": "refuerzo_tiempo",
+                "actividad": actividad_lenta,
+                "motivo": f"Mejorar eficiencia (+{diferencia:.1f}% vs promedio)"
+            })
+
+    # 5. 🚀 ACTIVIDADES NUEVAS (si todavía hay espacio)
+    if len(roadmap) < max_actividades:
+        # Buscar actividades nuevas para completar el roadmap
+        actividades_nuevas_agregadas = 0
+        max_nuevas = 3  # Máximo 3 actividades nuevas
+        
+        while len(roadmap) < max_actividades and actividades_nuevas_agregadas < max_nuevas:
             siguiente = obtener_siguiente_no_rap()
             if not siguiente:
-                # Intentar refuerzo de tiempo si no hay actividades nuevas
-                actividad_lenta = obtener_siguiente_lenta()
-                if actividad_lenta:
-                    act_key = (actividad_lenta.get("tipo"), actividad_lenta.get("nombre"))
-                    actividades_vistas.add(act_key)
-                    diferencia = actividad_lenta.get('diferencia_porcentual', 0)
-                    roadmap.append({
-                        "estrategia": "refuerzo_tiempo",
-                        "actividad": actividad_lenta,
-                        "motivo": f"Refuerzo recomendado - Tiempo +{diferencia:.1f}% vs promedio"
-                    })
-                    # Continuar para ver si hay más actividades lentas
-                    continue
-                else:
-                    break  # No hay más actividades de ningún tipo
-            actividad = siguiente
-
-        # Verificar si ya procesamos esta actividad
-        act_key = (actividad.get("tipo"), actividad.get("nombre"))
-        if act_key in actividades_vistas:
-            continue
+                break
+                
+            act_tipo: Optional[str] = siguiente.get("tipo")
+            act_nombre: Optional[str] = siguiente.get("nombre")
+            act_key = (act_tipo, act_nombre)
             
-        actividades_vistas.add(act_key)
-        
-        # Añadir al roadmap con la estrategia correspondiente
-        item_roadmap: Dict[str, Any] = {
-            "estrategia": estrategia, 
-            "actividad": actividad
-        }
-            
-        roadmap.append(item_roadmap)
-
-        # Simular avance en el progreso (solo para actividades no-RAP)
-        if actividad.get("tipo") != "RAP":
-            if act_key in prog_map:
-                # Actualizar estado existente
-                if estrategia == "refuerzo":
-                    prog_map[act_key]["estado"] = "Completado"
-                elif estrategia == "mejora":
-                    prog_map[act_key]["estado"] = "Perfecto"
-                elif estrategia == "nuevas":
-                    prog_map[act_key]["estado"] = "Completado"
-            else:
-                # Añadir nueva actividad al progreso simulado
-                prog_map[act_key] = {
-                    "tipo": actividad.get("tipo"), 
-                    "nombre": actividad.get("nombre"), 
-                    "estado": "Completado"
-                }
+            if act_key not in actividades_vistas:
+                actividades_vistas.add(act_key)
+                roadmap.append({
+                    "estrategia": "nuevas", 
+                    "actividad": siguiente,
+                    "motivo": "Nuevo desafío de aprendizaje"
+                })
+                actividades_nuevas_agregadas += 1
 
     return roadmap
 
@@ -216,7 +233,7 @@ def generar_roadmap_para_alumno(
     
     return generar_roadmap_from_progress_and_fetcher(progreso, fetch_next_func)
 
-# NUEVAS FUNCIONES PARA ANÁLISIS COMPARATIVO - Agregar al final de consultar.py
+# NUEVAS FUNCIONES PARA ANÁLISIS COMPARATIVO - CORREGIDAS
 
 def analizar_rendimiento_comparativo(correo: str) -> Dict[str, Any]:
     """
@@ -224,18 +241,18 @@ def analizar_rendimiento_comparativo(correo: str) -> Dict[str, Any]:
     EXCLUYE RAPs del análisis comparativo
     """
     from Neo4J.neo_queries import (
-        fetch_estadisticas_globales_actividades, 
-        fetch_estadisticas_alumno_avanzadas,
-        verificar_alumno_todo_perfecto
+        fetch_estadisticas_globales,  # CORREGIDO: nombre correcto
+        fetch_estadisticas_alumno,    # CORREGIDO: nombre correcto
+        fetch_verificar_alumno_perfecto  # CORREGIDO: nombre correcto
     )
     
     # Verificar si el alumno tiene todo perfecto (EXCLUYENDO RAPs)
-    if not verificar_alumno_todo_perfecto(correo):
+    if not fetch_verificar_alumno_perfecto(correo):
         return {"error": "El alumno no tiene todas las actividades en estado Perfecto"}
     
     print("📊 Obteniendo datos para análisis comparativo...")
-    stats_globales = fetch_estadisticas_globales_actividades()
-    stats_alumno = fetch_estadisticas_alumno_avanzadas(correo)
+    stats_globales = fetch_estadisticas_globales()
+    stats_alumno = fetch_estadisticas_alumno(correo)
     
     # Filtrar actividades del alumno para excluir RAPs
     actividades_alumno_sin_raps = {
