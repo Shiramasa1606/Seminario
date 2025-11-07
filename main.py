@@ -81,7 +81,7 @@ def ver_progreso_alumno(correo: str) -> None:
         return
     
     print("\n" + "📊 PROGRESO DEL ALUMNO")
-    print("-" * 50)
+    print("=" * 60)
     
     # Estadísticas rápidas
     total_actividades = len(progreso)
@@ -89,25 +89,83 @@ def ver_progreso_alumno(correo: str) -> None:
     completados = len([p for p in progreso if p.get("estado") == "Completado"])
     perfectos = len([p for p in progreso if p.get("estado") == "Perfecto"])
     
-    print(f"📈 Resumen: {total_actividades} actividades realizadas")
+    print(f"📈 Resumen General:")
     print(f"   • 🔄 Intentos: {intentos}")
     print(f"   • ✅ Completados: {completados}")
     print(f"   • 🏆 Perfectos: {perfectos}")
+    print(f"   • 📊 Total actividades: {total_actividades}")
     
     if total_actividades > 0:
         porcentaje_completado = ((completados + perfectos) / total_actividades) * 100
-        print(f"   • 📊 Progreso general: {porcentaje_completado:.1f}%")
+        print(f"   • 🎯 Progreso general: {porcentaje_completado:.1f}%")
     
-    print("\n📋 Detalle de actividades:")
-    print("-" * 30)
-    for p in progreso:
-        estado_emoji = {
-            "Intento": "🔄",
-            "Completado": "✅", 
-            "Perfecto": "🏆"
-        }.get(p.get("estado", ""), "📌")
+    # Agrupar actividades por estado
+    actividades_por_estado: Dict[str, List[Dict[str, Any]]] = {
+        "🔄 EN PROGRESO": [p for p in progreso if p.get("estado") == "Intento"],
+        "✅ COMPLETADAS": [p for p in progreso if p.get("estado") == "Completado"],
+        "🏆 PERFECTAS": [p for p in progreso if p.get("estado") == "Perfecto"]
+    }
+    
+    print("\n" + "📋 DETALLE AGRUPADO POR ESTADO")
+    print("=" * 60)
+    
+    for estado, actividades in actividades_por_estado.items():
+        if actividades:
+            print(f"\n{estado} ({len(actividades)} actividades):")
+            print("-" * 40)
+            
+            # Agrupar por tipo de actividad (usando nombre diferente)
+            actividades_agrupadas_por_tipo: Dict[str, List[Dict[str, Any]]] = {}
+            for actividad in actividades:
+                tipo_act: str = str(actividad.get('tipo', 'Desconocido'))
+                if tipo_act not in actividades_agrupadas_por_tipo:
+                    actividades_agrupadas_por_tipo[tipo_act] = []
+                actividades_agrupadas_por_tipo[tipo_act].append(actividad)
+            
+            for tipo_act, lista_act in actividades_agrupadas_por_tipo.items():
+                print(f"  📚 {tipo_act} ({len(lista_act)}):")
+                for act in lista_act:
+                    nombre_act: str = str(act.get('nombre', 'Sin nombre'))
+                    # Mostrar información adicional si está disponible
+                    info_extra = ""
+                    if act.get('score'):
+                        score_val = act.get('score')
+                        info_extra = f" - Puntaje: {score_val}%"
+                    elif act.get('duration_seconds'):
+                        duration_val = act.get('duration_seconds', 0)
+                        minutos: int = int(duration_val) // 60
+                        info_extra = f" - Tiempo: {minutos}min"
+                    
+                    print(f"     • {nombre_act}{info_extra}")
+    
+    # Resumen por tipo de actividad (usando nombre diferente)
+    print("\n" + "🎯 RESUMEN POR TIPO DE ACTIVIDAD")
+    print("-" * 40)
+    
+    resumen_por_tipo: Dict[str, Dict[str, int]] = {}
+    for actividad in progreso:
+        tipo_act: str = str(actividad.get('tipo', 'Desconocido'))
+        if tipo_act not in resumen_por_tipo:
+            resumen_por_tipo[tipo_act] = {'total': 0, 'intentos': 0, 'completados': 0, 'perfectos': 0}
         
-        print(f"{estado_emoji} {p['tipo']}: {p['nombre']}")
+        resumen_por_tipo[tipo_act]['total'] += 1
+        estado_act = actividad.get('estado', '')
+        if estado_act == "Intento":
+            resumen_por_tipo[tipo_act]['intentos'] += 1
+        elif estado_act == "Completado":
+            resumen_por_tipo[tipo_act]['completados'] += 1
+        elif estado_act == "Perfecto":
+            resumen_por_tipo[tipo_act]['perfectos'] += 1
+    
+    for tipo_act, estadisticas in resumen_por_tipo.items():
+        print(f"  📖 {tipo_act}:")
+        print(f"     • Total: {estadisticas['total']}")
+        if estadisticas['intentos'] > 0:
+            print(f"     • 🔄 En progreso: {estadisticas['intentos']}")
+        if estadisticas['completados'] > 0:
+            print(f"     • ✅ Completadas: {estadisticas['completados']}")
+        if estadisticas['perfectos'] > 0:
+            print(f"     • 🏆 Perfectas: {estadisticas['perfectos']}")
 
 def ver_siguiente_actividad_alumno(correo: str) -> None:
     progreso = fetch_progreso_alumno(correo)
