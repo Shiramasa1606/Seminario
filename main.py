@@ -299,15 +299,43 @@ def ver_siguiente_actividad_alumno(correo: str) -> None:
             print("🏆 **¡Impresionante! Estás cerca de dominar todo el material**")
 
 def ver_roadmap_alumno(correo: str) -> None:
+    from Neo4J.consultar import analizar_rendimiento_comparativo
+    
     progreso = fetch_progreso_alumno(correo)
     if not progreso:
         print("⚠️ No hay progreso registrado para este alumno")
-        return
+        progreso = []
     
     def fetch_next_activity() -> Optional[Dict[str, Any]]:
         return fetch_siguiente_por_avance(correo)
     
-    roadmap = generar_roadmap_from_progress_and_fetcher(progreso, fetch_next_activity)
+    # Obtener actividades lentas del análisis comparativo
+    actividades_lentas: List[Dict[str, Any]] = []
+    try:
+        analisis: Dict[str, Any] = analizar_rendimiento_comparativo(correo)
+        if "error" not in analisis and "comparativas" in analisis:
+            comparativas: List[Dict[str, Any]] = analisis["comparativas"]
+            # Filtrar actividades donde el alumno fue más lento que el promedio
+            actividades_lentas = [
+                comparativa for comparativa in comparativas
+                if comparativa.get("diferencia_porcentual", 0) > 10  # +10% más lento
+            ]
+            # Ordenar por menor eficiencia (mayor diferencia primero)
+            actividades_lentas.sort(
+                key=lambda x: x.get("diferencia_porcentual", 0), 
+                reverse=True
+            )
+            print(f"📊 Identificadas {len(actividades_lentas)} actividades para refuerzo de tiempo")
+    except Exception as e:
+        print(f"⚠️ No se pudieron obtener actividades para refuerzo de tiempo: {e}")
+        actividades_lentas = []
+    
+    roadmap: List[Dict[str, Any]] = generar_roadmap_from_progress_and_fetcher(
+        progreso, 
+        fetch_next_activity, 
+        actividades_lentas
+    )
+    
     if not roadmap:
         print("🎉 ¡Felicidades! Has completado todas las actividades disponibles")
         return
@@ -315,28 +343,54 @@ def ver_roadmap_alumno(correo: str) -> None:
     print("\n" + "🗺️ ROADMAP COMPLETO DE APRENDIZAJE")
     print("-" * 50)
     print(f"📋 Total de recomendaciones: {len(roadmap)}")
-    print("\n" + "="*60)
+    
+    # Mostrar estadísticas de tipos de recomendaciones
+    estrategias_count: Dict[str, int] = {}
+    for r in roadmap:
+        estrategia: str = r["estrategia"]
+        estrategias_count[estrategia] = estrategias_count.get(estrategia, 0) + 1
+    
+    print("📊 Resumen: ", end="")
+    for estrategia, count in estrategias_count.items():
+        emoji: str = {
+            "nuevas": "🆕",
+            "refuerzo": "🔄", 
+            "mejora": "📈",
+            "refuerzo_tiempo": "⏰"
+        }.get(estrategia, "📌")
+        print(f"{emoji} {count} ", end="")
+    print()
+    
+    print("\n" + "=" * 60)
     
     for i, r in enumerate(roadmap, 1):
-        act = r['actividad']
-        estrategia = r['estrategia']
+        act: Dict[str, Any] = r['actividad']
+        estrategia: str = r['estrategia']
         
-        # Emojis y colores según estrategia
-        estrategia_config = {
-            "refuerzo": ("🔄", "REFUERZO"),
-            "mejora": ("📈", "MEJORA"),
-            "avance": ("🚀", "AVANCE"), 
-            "nueva_actividad": ("🆕", "NUEVA"),
-            "comenzar": ("🎯", "COMIENZO"),
-            "completado": ("🏆", "COMPLETADO"),
-            "inicio": ("🎯", "INICIO")
-        }.get(estrategia, ("📌", estrategia.upper()))
+        # Actualizar emojis según nuevas estrategias
+        estrategia_config: Dict[str, tuple[str, str]] = {
+            "nuevas": ("🆕", "NUEVA ACTIVIDAD"),
+            "refuerzo": ("🔄", "TERMINAR ACTIVIDAD"),
+            "mejora": ("📈", "MEJORAR RESULTADO"), 
+            "refuerzo_tiempo": ("⏰", "REFUERZO DE TIEMPO"),
+            "avance": ("🚀", "AVANCE")
+        }
         
-        emoji, texto_estrategia = estrategia_config
+        emoji, texto_estrategia = estrategia_config.get(
+            estrategia, 
+            ("📌", estrategia.upper())
+        )
         
         print(f"\n{i}. {emoji} [{texto_estrategia}]")
         print(f"   📚 {act.get('tipo', 'Actividad')}")
         print(f"   📖 {act.get('nombre', 'Sin nombre')}")
+        
+        # Mostrar motivo si existe (especialmente para refuerzo_tiempo)
+        if r.get('motivo'):
+            print(f"   💡 {r['motivo']}")
+        # Mostrar diferencia de tiempo para actividades de refuerzo
+        elif estrategia == "refuerzo_tiempo" and act.get('diferencia_porcentual'):
+            print(f"   ⏱️  Tiempo: +{act['diferencia_porcentual']:.1f}% vs promedio")
         
         # Línea separadora cada 3 pasos
         if i % 3 == 0 and i < len(roadmap):
