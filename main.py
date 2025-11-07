@@ -37,39 +37,136 @@ def mostrar_menu_alumno(nombre: str) -> str:
 # Funciones de análisis detallado
 # ============================================================
 
+def _obtener_datos_analisis_detallado(analisis: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """
+    Procesa el análisis y devuelve datos estructurados para presentación
+    """
+    comparativas: List[Dict[str, Any]] = analisis.get("comparativas", [])
+    datos_actividades: List[Dict[str, Any]] = []
+    
+    for comparativa in comparativas:
+        actividad_data: Dict[str, Any] = {
+            "nombre": comparativa.get('actividad', 'Desconocida'),
+            "tipo": comparativa.get('tipo', 'Desconocido'),
+            "puntaje": comparativa.get('puntaje_final', 0),
+            "intentos": comparativa.get('total_intentos', 0),
+            "tiempo_promedio": comparativa.get('duracion_promedio_alumno', 0),
+            "tiempo_grupo": comparativa.get('duracion_promedio_global'),
+            "diferencia_porcentual": comparativa.get('diferencia_porcentual', 0),
+            "categoria_eficiencia": comparativa.get('eficiencia'),
+            "mensaje_eficiencia": "",
+            "emoji_eficiencia": ""
+        }
+        
+        # Calcular mensaje de eficiencia
+        diferencia = actividad_data["diferencia_porcentual"]
+        if diferencia < -10:
+            actividad_data["mensaje_eficiencia"] = f"🚀 Eres {abs(diferencia):.1f}% más rápido que el promedio"
+        elif diferencia > 10:
+            actividad_data["mensaje_eficiencia"] = f"⏰ Estás {diferencia:.1f}% más lento que el promedio"
+        else:
+            actividad_data["mensaje_eficiencia"] = "📊 Tu tiempo está en el promedio"
+        
+        # Asignar emoji de categoría
+        if actividad_data["categoria_eficiencia"]:
+            emoji_eficiencia = {
+                "MUY_EFICIENTE": "🚀",
+                "EFICIENTE": "⚡", 
+                "PROMEDIO": "📊",
+                "LENTO": "🐢",
+                "MUY_LENTO": "⏰"
+            }.get(actividad_data["categoria_eficiencia"], "📌")
+            actividad_data["emoji_eficiencia"] = emoji_eficiencia
+        
+        datos_actividades.append(actividad_data)
+    
+    return datos_actividades
+
+
 def _mostrar_analisis_detallado(analisis: Dict[str, Any]) -> None:
     """Muestra el análisis detallado actividad por actividad"""
     print(f"\n" + "📈 ANÁLISIS DETALLADO POR ACTIVIDAD")
     print("=" * 70)
     
-    comparativas: List[Dict[str, Any]] = analisis.get("comparativas", [])
+    # Obtener datos procesados
+    actividades_data = _obtener_datos_analisis_detallado(analisis)
     
-    for comparativa in comparativas:
-        print(f"\n📚 {comparativa.get('actividad', 'Desconocida')} ({comparativa.get('tipo', 'Desconocido')})")
-        print(f"   Puntaje: {comparativa.get('puntaje_final', 0)}% - Intentos: {comparativa.get('total_intentos', 0)}")
-        print(f"   Tu tiempo promedio: {formatear_tiempo_analisis(comparativa.get('duracion_promedio_alumno', 0))}")
+    for actividad in actividades_data:
+        print(f"\n📚 {actividad['nombre']} ({actividad['tipo']})")
+        print(f"   Puntaje: {actividad['puntaje']}% - Intentos: {actividad['intentos']}")
+        print(f"   Tu tiempo promedio: {formatear_tiempo_analisis(actividad['tiempo_promedio'])}")
         
-        if "duracion_promedio_global" in comparativa:
-            print(f"   Tiempo promedio del grupo: {formatear_tiempo_analisis(comparativa['duracion_promedio_global'])}")
-            diferencia: float = comparativa.get('diferencia_porcentual', 0)
+        if actividad['tiempo_grupo'] is not None:
+            print(f"   Tiempo promedio del grupo: {formatear_tiempo_analisis(actividad['tiempo_grupo'])}")
+            print(f"   {actividad['mensaje_eficiencia']}")
             
-            if diferencia < -10:
-                print(f"   🚀 Eres {abs(diferencia):.1f}% más rápido que el promedio")
-            elif diferencia > 10:
-                print(f"   ⏰ Estás {diferencia:.1f}% más lento que el promedio")
-            else:
-                print(f"   📊 Tu tiempo está en el promedio")
-            
-            if "eficiencia" in comparativa:
-                emoji_eficiencia = {
-                    "MUY_EFICIENTE": "🚀",
-                    "EFICIENTE": "⚡", 
-                    "PROMEDIO": "📊",
-                    "LENTO": "🐢",
-                    "MUY_LENTO": "⏰"
-                }.get(comparativa["eficiencia"], "📌")
-                print(f"   {emoji_eficiencia} Categoría: {comparativa['eficiencia'].replace('_', ' ').title()}")
+            if actividad['emoji_eficiencia'] and actividad['categoria_eficiencia']:
+                print(f"   {actividad['emoji_eficiencia']} Categoría: {actividad['categoria_eficiencia'].replace('_', ' ').title()}")
 
+
+def _obtener_resumen_analisis(analisis: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Genera un resumen estadístico del análisis
+    """
+    actividades_data = _obtener_datos_analisis_detallado(analisis)
+    
+    if not actividades_data:
+        return {}
+    
+    # Calcular estadísticas
+    total_actividades = len(actividades_data)
+    actividades_eficientes = len([a for a in actividades_data if a['diferencia_porcentual'] < -10])
+    actividades_promedio = len([a for a in actividades_data if -10 <= a['diferencia_porcentual'] <= 10])
+    actividades_lentas = len([a for a in actividades_data if a['diferencia_porcentual'] > 10])
+    
+    # Actividades más problemáticas (mayor diferencia de tiempo)
+    actividades_mas_lentas = sorted(
+        [a for a in actividades_data if a['diferencia_porcentual'] > 0],
+        key=lambda x: x['diferencia_porcentual'],
+        reverse=True
+    )[:3]  # Top 3 más lentas
+    
+    # Actividades más eficientes
+    actividades_mas_eficientes = sorted(
+        [a for a in actividades_data if a['diferencia_porcentual'] < 0],
+        key=lambda x: x['diferencia_porcentual']
+    )[:3]  # Top 3 más eficientes
+    
+    return {
+        "total_actividades": total_actividades,
+        "actividades_eficientes": actividades_eficientes,
+        "actividades_promedio": actividades_promedio,
+        "actividades_lentas": actividades_lentas,
+        "actividades_mas_lentas": actividades_mas_lentas,
+        "actividades_mas_eficientes": actividades_mas_eficientes,
+        "porcentaje_lentas": (actividades_lentas / total_actividades * 100) if total_actividades > 0 else 0
+    }
+
+
+def _mostrar_resumen_analisis(analisis: Dict[str, Any]) -> None:
+    """Muestra un resumen ejecutivo del análisis"""
+    resumen = _obtener_resumen_analisis(analisis)
+    
+    if not resumen:
+        print("📊 No hay datos suficientes para generar resumen")
+        return
+    
+    print(f"\n🎯 RESUMEN EJECUTIVO DEL ANÁLISIS")
+    print("=" * 50)
+    print(f"📈 Total de actividades analizadas: {resumen['total_actividades']}")
+    print(f"✅ Eficientes: {resumen['actividades_eficientes']} actividades")
+    print(f"📊 En promedio: {resumen['actividades_promedio']} actividades") 
+    print(f"⏰ Necesitan mejora: {resumen['actividades_lentas']} actividades")
+    
+    if resumen['actividades_mas_lentas']:
+        print(f"\n🔴 TOP 3 ACTIVIDADES QUE NECESITAN MÁS ATENCIÓN:")
+        for i, actividad in enumerate(resumen['actividades_mas_lentas'], 1):
+            print(f"   {i}. {actividad['nombre']} (+{actividad['diferencia_porcentual']:.1f}% tiempo)")
+    
+    if resumen['actividades_mas_eficientes']:
+        print(f"\n🟢 TOP 3 ACTIVIDADES MÁS EFICIENTES:")
+        for i, actividad in enumerate(resumen['actividades_mas_eficientes'], 1):
+            print(f"   {i}. {actividad['nombre']} ({abs(actividad['diferencia_porcentual']):.1f}% más rápido)")
 # ============================================================
 # Funciones de opciones MEJORADAS
 # ============================================================
@@ -427,6 +524,9 @@ def ver_analisis_avanzado_alumno(correo: str) -> None:
         progreso_porcentaje = ((completados + perfectos) / total_actividades) * 100
         print(f"• 📈 Progreso general: {progreso_porcentaje:.1f}%")
     
+    # Inicializar análisis
+    analisis: Dict[str, Any] = {}
+    
     # Verificar si tiene todo perfecto para análisis completo
     tiene_todo_perfecto = verificar_alumno_todo_perfecto(correo)
     
@@ -443,7 +543,7 @@ def ver_analisis_avanzado_alumno(correo: str) -> None:
         stats_alumno = fetch_estadisticas_alumno_avanzadas(correo)
         
         # Crear un análisis básico con la información disponible
-        analisis: Dict[str, Any] = {
+        analisis = {
             "resumen_general": {
                 "total_actividades": stats_alumno["resumen"]["total_actividades"],
                 "tiempo_total_alumno": stats_alumno["resumen"]["total_tiempo_segundos"],
@@ -508,7 +608,7 @@ def ver_analisis_avanzado_alumno(correo: str) -> None:
         if analisis["comparativas"]:
             _generar_insights_basicos(analisis, tiene_todo_perfecto)
     
-    # Mostrar resultados del análisis
+    # Mostrar resultados del análisis (sin verificación de None)
     if "error" in analisis:
         print(f"\nℹ️  {analisis['error']}")
         return
@@ -517,6 +617,9 @@ def ver_analisis_avanzado_alumno(correo: str) -> None:
         print("⚠️ No hay suficientes datos de tiempo para realizar el análisis")
         print("💡 Las actividades necesitan tener registro de duración")
         return
+    
+    # --- MOSTRAR RESUMEN EJECUTIVO PRIMERO ---
+    _mostrar_resumen_analisis(analisis)
     
     # Resumen general
     resumen: Dict[str, Any] = analisis["resumen_general"]
@@ -553,6 +656,7 @@ def ver_analisis_avanzado_alumno(correo: str) -> None:
         print(f"\n📋 ¿Ver análisis detallado por actividad? (s/n): ", end="")
         if input().strip().lower() == 's':
             _mostrar_analisis_detallado(analisis)
+
 
 def _generar_insights_basicos(analisis: Dict[str, Any], tiene_todo_perfecto: bool) -> None:
     """
