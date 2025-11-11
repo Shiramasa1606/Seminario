@@ -57,11 +57,11 @@ def generar_roadmap_from_progress_and_fetcher(
     actividades_lentas: Optional[List[ActivityDict]] = None
 ) -> List[Dict[str, Any]]:
     """
-    Genera un roadmap en memoria con JERARQUÍA DE PRIORIDADES:
-    1. 🚀 NUEVAS ACTIVIDADES (no en progreso)
-    2. 🔄 ACTIVIDADES EN INTENTO (no terminadas)
+    Genera un roadmap en memoria con JERARQUÍA DE PRIORIDADES SIN LÍMITES:
+    1. 🔄 ACTIVIDADES EN INTENTO (no terminadas)
+    2. ⏰ ACTIVIDADES PARA MEJORAR TIEMPO (TODAS las identificadas como lentas)
     3. 📈 ACTIVIDADES PARA MEJORAR (Completado → Perfecto) 
-    4. ⏰ ACTIVIDADES PARA MEJORAR TIEMPO (Completadas/Perfectas lentas)
+    4. 🚀 NUEVAS ACTIVIDADES (no en progreso)
     """
     roadmap: List[Dict[str, Any]] = []
     actividades_vistas: set[Tuple[Optional[str], Optional[str]]] = set()
@@ -88,24 +88,29 @@ def generar_roadmap_from_progress_and_fetcher(
         elif estado == "Completado" and act_key not in actividades_vistas:
             actividades_mejora.append(actividad)
     
-    # Preparar actividades lentas - SOLO para actividades Completadas o Perfectas
+    # PREPARAR ACTIVIDADES LENTAS - INCLUIR TODAS LAS IDENTIFICADAS
     if actividades_lentas:
+        print(f"🔍 Procesando {len(actividades_lentas)} actividades lentas identificadas...")
+        procesadas = 0
         for act_lenta in actividades_lentas:
             act_tipo: Optional[str] = act_lenta.get("tipo")
             act_nombre: Optional[str] = act_lenta.get("nombre")
             act_key = (act_tipo, act_nombre)
             
-            # SOLO incluir actividades lentas que están en estado Completado o Perfecto
-            if (act_key in prog_map and 
-                prog_map[act_key].get("estado") in ["Completado", "Perfecto"] and
-                act_key not in actividades_vistas):
-                actividades_lentas_activas.append(act_lenta)
+            # INCLUIR actividades lentas que existen en el progreso y no están en el roadmap
+            if act_key in prog_map and act_key not in actividades_vistas:
+                # Combinar datos del progreso con análisis de tiempo
+                actividad_combinada = {**prog_map[act_key], **act_lenta}
+                actividades_lentas_activas.append(actividad_combinada)
+                procesadas += 1
+        print(f"🔍 Se agregaron {procesadas} actividades lentas al roadmap.")
         
         # Ordenar por diferencia porcentual (más lentas primero)
         actividades_lentas_activas.sort(
             key=lambda x: x.get('diferencia_porcentual', 0), 
             reverse=True
         )
+        print(f"   📊 Actividades lentas válidas para roadmap: {len(actividades_lentas_activas)}")
 
     # Función auxiliar para obtener siguiente actividad no-RAP
     def obtener_siguiente_no_rap() -> Optional[ActivityDict]:
@@ -114,30 +119,10 @@ def generar_roadmap_from_progress_and_fetcher(
             siguiente = fetch_next_for_avance()
         return siguiente
 
-    # ========== JERARQUÍA DE PRIORIDADES ==========
+    # ========== JERARQUÍA DE PRIORIDADES SIN LÍMITES ==========
     
-    max_actividades = 15  # Límite razonable para el roadmap
-    
-    # 1. 🚀 NUEVAS ACTIVIDADES (si no hay progreso)
-    if not prog_map:
-        siguiente = obtener_siguiente_no_rap()
-        if siguiente:
-            act_tipo: Optional[str] = siguiente.get("tipo")
-            act_nombre: Optional[str] = siguiente.get("nombre")
-            act_key = (act_tipo, act_nombre)
-            actividades_vistas.add(act_key)
-            roadmap.append({
-                "estrategia": "nuevas", 
-                "actividad": siguiente,
-                "motivo": "Comienza tu journey de aprendizaje"
-            })
-        return roadmap
-
-    # 2. 🔄 ACTIVIDADES EN INTENTO (prioridad máxima)
+    # 1. 🔄 ACTIVIDADES EN INTENTO (prioridad máxima) - TODAS
     for actividad in actividades_intento:
-        if len(roadmap) >= max_actividades:
-            break
-            
         act_tipo = actividad.get("tipo")
         act_nombre = actividad.get("nombre")
         act_key = (act_tipo, act_nombre)
@@ -150,28 +135,8 @@ def generar_roadmap_from_progress_and_fetcher(
                 "motivo": "Terminar actividad pendiente"
             })
 
-    # 3. 📈 ACTIVIDADES PARA MEJORAR (Completado → Perfecto)
-    for actividad in actividades_mejora:
-        if len(roadmap) >= max_actividades:
-            break
-            
-        act_tipo = actividad.get("tipo")
-        act_nombre = actividad.get("nombre")
-        act_key = (act_tipo, act_nombre)
-        
-        if act_key not in actividades_vistas:
-            actividades_vistas.add(act_key)
-            roadmap.append({
-                "estrategia": "mejora", 
-                "actividad": actividad,
-                "motivo": "Buscar calificación perfecta"
-            })
-
-    # 4. ⏰ ACTIVIDADES PARA MEJORAR TIEMPO (Completadas/Perfectas lentas)
+    # 2. ⏰ ACTIVIDADES PARA MEJORAR TIEMPO - TODAS LAS IDENTIFICADAS
     for actividad_lenta in actividades_lentas_activas:
-        if len(roadmap) >= max_actividades:
-            break
-            
         act_tipo = actividad_lenta.get("tipo")
         act_nombre = actividad_lenta.get("nombre")
         act_key = (act_tipo, act_nombre)
@@ -185,29 +150,52 @@ def generar_roadmap_from_progress_and_fetcher(
                 "motivo": f"Mejorar eficiencia (+{diferencia:.1f}% vs promedio)"
             })
 
-    # 5. 🚀 ACTIVIDADES NUEVAS (si todavía hay espacio)
-    if len(roadmap) < max_actividades:
-        # Buscar actividades nuevas para completar el roadmap
-        actividades_nuevas_agregadas = 0
-        max_nuevas = 3  # Máximo 3 actividades nuevas
+    # 3. 📈 ACTIVIDADES PARA MEJORAR (Completado → Perfecto) - TODAS
+    for actividad in actividades_mejora:
+        act_tipo = actividad.get("tipo")
+        act_nombre = actividad.get("nombre")
+        act_key = (act_tipo, act_nombre)
         
-        while len(roadmap) < max_actividades and actividades_nuevas_agregadas < max_nuevas:
-            siguiente = obtener_siguiente_no_rap()
-            if not siguiente:
-                break
-                
-            act_tipo: Optional[str] = siguiente.get("tipo")
-            act_nombre: Optional[str] = siguiente.get("nombre")
-            act_key = (act_tipo, act_nombre)
+        if act_key not in actividades_vistas:
+            actividades_vistas.add(act_key)
+            roadmap.append({
+                "estrategia": "mejora", 
+                "actividad": actividad,
+                "motivo": "Buscar calificación perfecta"
+            })
+
+    # 4. 🚀 ACTIVIDADES NUEVAS - BUSCAR HASTA 10 COMO MÁXIMO RAZONABLE
+    # (Para evitar roadmap infinito si hay muchas actividades disponibles)
+    actividades_nuevas_agregadas = 0
+    max_nuevas_razonable = 10
+    
+    while actividades_nuevas_agregadas < max_nuevas_razonable:
+        siguiente = obtener_siguiente_no_rap()
+        if not siguiente:
+            break
             
-            if act_key not in actividades_vistas:
-                actividades_vistas.add(act_key)
-                roadmap.append({
-                    "estrategia": "nuevas", 
-                    "actividad": siguiente,
-                    "motivo": "Nuevo desafío de aprendizaje"
-                })
-                actividades_nuevas_agregadas += 1
+        act_tipo: Optional[str] = siguiente.get("tipo")
+        act_nombre: Optional[str] = siguiente.get("nombre")
+        act_key = (act_tipo, act_nombre)
+        
+        if act_key not in actividades_vistas:
+            actividades_vistas.add(act_key)
+            roadmap.append({
+                "estrategia": "nuevas", 
+                "actividad": siguiente,
+                "motivo": "Nuevo desafío de aprendizaje"
+            })
+            actividades_nuevas_agregadas += 1
+        else:
+            # Si encontramos una actividad que ya está en el roadmap, salir
+            break
+
+    print(f"\n")
+    print(f"   📋 Roadmap generado con {len(roadmap)} actividades totales:")
+    print(f"   🔄 Actividades en intento: {len(actividades_intento)}")
+    print(f"   ⏰ Actividades para mejorar tiempo: {len(actividades_lentas_activas)}")
+    print(f"   📈 Actividades para mejorar: {len(actividades_mejora)}")
+    print(f"   🚀 Actividades nuevas: {actividades_nuevas_agregadas}")
 
     return roadmap
 

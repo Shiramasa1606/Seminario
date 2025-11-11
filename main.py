@@ -441,8 +441,7 @@ def ver_roadmap_alumno(correo: str) -> None:
     print("=" * 60)
     print(f"📋 Total de recomendaciones: {len(roadmap)}")
     
-    # Mostrar resumen de estrategias con jerarquía
-    print("\n🎯 JERARQUÍA DE PRIORIDADES:")
+    print(f"\n🎯 JERARQUÍA DE PRIORIDADES:")
     print("-" * 30)
     
     estrategias_info = {
