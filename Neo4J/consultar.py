@@ -643,3 +643,436 @@ def formatear_tiempo_analisis(segundos: float) -> str:
     else:
         horas: float = segundos / 3600
         return f"{horas:.1f} horas"
+    
+# ============================================================================
+# FUNCIONES DE ESTADÍSTICAS DE PARALELO
+# ============================================================================
+
+def obtener_lista_paralelos_procesada(
+    fetch_paralelos_func: Callable[[], List[Dict[str, str]]]
+) -> List[str]:
+    """
+    Obtiene y procesa la lista de paralelos disponibles para presentación al usuario.
+    
+    Args:
+        fetch_paralelos_func: Función que retorna lista de paralelos desde Neo4J
+        
+    Returns:
+        List[str]: Lista ordenada de nombres de paralelos disponibles
+        
+    Example:
+        >>> paralelos = obtener_lista_paralelos_procesada(fetch_paralelos_disponibles)
+        >>> print(f"Paralelos disponibles: {paralelos}")
+        ['Paralelo_1', 'Paralelo_2', 'Paralelo_3']
+    """
+    try:
+        paralelos_crudos = fetch_paralelos_func()
+        paralelos_procesados = [p["paralelo"] for p in paralelos_crudos if p.get("paralelo")]
+        return sorted(paralelos_procesados)
+    except Exception as e:
+        print(f"❌ Error obteniendo lista de paralelos: {e}")
+        return []
+
+
+def procesar_metricas_completitud_paralelo(
+    datos_completitud: Dict[str, Any]
+) -> Dict[str, Any]:
+    """
+    Procesa y enriquece las métricas de completitud de un paralelo.
+    
+    Calcula métricas derivadas y formatea los datos para presentación.
+    
+    Args:
+        datos_completitud: Datos crudos de completitud desde Neo4J
+        
+    Returns:
+        Dict[str, Any]: Métricas procesadas con análisis adicional
+        
+    Example:
+        >>> metricas = procesar_metricas_completitud_paralelo(datos_crudos)
+        >>> print(f"Porcentaje completitud: {metricas['porcentaje_completitud_global']:.1f}%")
+        Porcentaje completitud: 75.5%
+    """
+    if not datos_completitud:
+        return {
+            "total_actividades": 0,
+            "actividades_completadas_todos": 0,
+            "promedio_completadas_por_alumno": 0.0,
+            "porcentaje_completitud_global": 0.0,
+            "total_alumnos": 0,
+            "brecha_actividades": 0,
+            "nivel_completitud": "MUY_BAJO"
+        }
+    
+    total_actividades = datos_completitud.get("total_actividades", 0)
+    actividades_completadas_todos = datos_completitud.get("actividades_completadas_todos", 0)
+    promedio_completadas = datos_completitud.get("promedio_completadas_por_alumno", 0.0)
+    porcentaje_completitud = datos_completitud.get("porcentaje_completitud_global", 0.0)
+    total_alumnos = datos_completitud.get("total_alumnos", 0)
+    
+    # Calcular métricas derivadas
+    brecha_actividades = total_actividades - actividades_completadas_todos
+    
+    # Categorizar nivel de completitud
+    if porcentaje_completitud >= 90:
+        nivel_completitud = "EXCELENTE"
+    elif porcentaje_completitud >= 75:
+        nivel_completitud = "BUENO"
+    elif porcentaje_completitud >= 50:
+        nivel_completitud = "REGULAR"
+    elif porcentaje_completitud >= 25:
+        nivel_completitud = "BAJO"
+    else:
+        nivel_completitud = "MUY_BAJO"
+    
+    return {
+        "total_actividades": total_actividades,
+        "actividades_completadas_todos": actividades_completadas_todos,
+        "promedio_completadas_por_alumno": promedio_completadas,
+        "porcentaje_completitud_global": porcentaje_completitud,
+        "total_alumnos": total_alumnos,
+        "brecha_actividades": brecha_actividades,
+        "nivel_completitud": nivel_completitud,
+        "actividades_pendientes_por_alumno": total_actividades - promedio_completadas
+    }
+
+
+def identificar_actividades_problematicas(
+    actividades_baja_participacion: List[Dict[str, Any]]
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """
+    Clasifica actividades de baja participación en críticas y no críticas.
+    
+    Args:
+        actividades_baja_participacion: Lista de actividades con baja participación
+        
+    Returns:
+        Tuple[List[Dict], List[Dict]]: (actividades_criticas, actividades_no_criticas)
+        
+    Example:
+        >>> criticas, no_criticas = identificar_actividades_problematicas(actividades)
+        >>> print(f"Actividades críticas: {len(criticas)}")
+        Actividades críticas: 3
+    """
+    actividades_criticas: List[Dict[str, Any]] = []
+    actividades_no_criticas: List[Dict[str, Any]] = []
+    
+    for actividad in actividades_baja_participacion:
+        if actividad.get("critico", False):
+            actividades_criticas.append(actividad)
+        else:
+            actividades_no_criticas.append(actividad)
+    
+    # Ordenar actividades críticas por participación (menor primero)
+    actividades_criticas.sort(key=lambda x: x.get("porcentaje_participacion", 100))
+    actividades_no_criticas.sort(key=lambda x: x.get("porcentaje_participacion", 100))
+    
+    return actividades_criticas, actividades_no_criticas
+
+
+def analizar_eficiencia_actividades(
+    datos_eficiencia: Dict[str, List[Dict[str, Any]]]
+) -> Dict[str, Any]:
+    """
+    Analiza y enriquece los datos de eficiencia de actividades.
+    
+    Calcula métricas agregadas y patrones en las actividades mejor/peor evaluadas.
+    
+    Args:
+        datos_eficiencia: Datos crudos de eficiencia desde Neo4J
+        
+    Returns:
+        Dict[str, Any]: Análisis completo de eficiencia con insights
+        
+    Example:
+        >>> analisis = analizar_eficiencia_actividades(datos_eficiencia)
+        >>> print(f"Mejor eficiencia: {analisis['mejor_eficiencia']['eficiencia']:.1f}%")
+        Mejor eficiencia: 95.2%
+    """
+    mejores = datos_eficiencia.get("mejores", [])
+    peores = datos_eficiencia.get("peores", [])
+    
+    # Calcular métricas agregadas
+    if mejores:
+        mejor_eficiencia = max(act["eficiencia"] for act in mejores)
+        promedio_mejores = sum(act["eficiencia"] for act in mejores) / len(mejores)
+    else:
+        mejor_eficiencia = 0.0
+        promedio_mejores = 0.0
+    
+    if peores:
+        peor_eficiencia = min(act["eficiencia"] for act in peores)
+        promedio_peores = sum(act["eficiencia"] for act in peores) / len(peores)
+    else:
+        peor_eficiencia = 0.0
+        promedio_peores = 0.0
+    
+    # Identificar patrones
+    patron_tipo_mejores = _analizar_patron_tipos(mejores)
+    patron_tipo_peores = _analizar_patron_tipos(peores)
+    
+    # Generar insights
+    insights = _generar_insights_eficiencia(mejores, peores, mejor_eficiencia, peor_eficiencia)
+    
+    return {
+        "mejores": mejores,
+        "peores": peores,
+        "metricas_agregadas": {
+            "mejor_eficiencia": mejor_eficiencia,
+            "peor_eficiencia": peor_eficiencia,
+            "promedio_mejores": promedio_mejores,
+            "promedio_peores": promedio_peores,
+            "brecha_eficiencia": mejor_eficiencia - peor_eficiencia
+        },
+        "patrones": {
+            "tipo_mejores": patron_tipo_mejores,
+            "tipo_peores": patron_tipo_peores
+        },
+        "insights": insights
+    }
+
+
+def _analizar_patron_tipos(actividades: List[Dict[str, Any]]) -> Dict[str, int]:
+    """
+    Analiza la distribución de tipos de actividades en una lista.
+    
+    Args:
+        actividades: Lista de actividades a analizar
+        
+    Returns:
+        Dict[str, int]: Conteo de actividades por tipo
+    """
+    conteo_tipos: Dict[str, int] = {}
+    
+    for actividad in actividades:
+        tipo = actividad.get("tipo", "Desconocido")
+        conteo_tipos[tipo] = conteo_tipos.get(tipo, 0) + 1
+    
+    return conteo_tipos
+
+
+def _generar_insights_eficiencia(
+    mejores: List[Dict[str, Any]],
+    peores: List[Dict[str, Any]],
+    mejor_eficiencia: float,
+    peor_eficiencia: float
+) -> List[str]:
+    """
+    Genera insights automáticos basados en el análisis de eficiencia.
+    
+    Args:
+        mejores: Lista de actividades más eficientes
+        peores: Lista de actividades menos eficientes
+        mejor_eficiencia: Valor de la mejor eficiencia
+        peor_eficiencia: Valor de la peor eficiencia
+        
+    Returns:
+        List[str]: Lista de insights generados
+    """
+    insights: List[str] = []
+    
+    # Insight sobre brecha de eficiencia
+    brecha = mejor_eficiencia - peor_eficiencia
+    if brecha > 50:
+        insights.append("📊 Existe una gran variación en el desempeño entre actividades")
+    elif brecha > 25:
+        insights.append("📈 Hay oportunidades significativas de mejora en actividades específicas")
+    
+    # Insight sobre distribución de tipos
+    if mejores and peores:
+        # CORRECCIÓN: Eliminé la variable no utilizada "tipos_mejores"
+        tipos_peores = _analizar_patron_tipos(peores)
+        
+        # Si hay un tipo que predomina en las peores
+        for tipo, count in tipos_peores.items():
+            if count >= len(peores) * 0.6:  # 60% o más de las peores son del mismo tipo
+                insights.append(f"🎯 Enfocar mejora en actividades de tipo '{tipo}'")
+                break
+    
+    # Insight sobre nivel absoluto de eficiencia
+    if peor_eficiencia < 30:
+        insights.append("⚠️ Algunas actividades tienen participación muy baja (<30%)")
+    elif peor_eficiencia < 50:
+        insights.append("💡 Hay actividades con oportunidad de aumentar participación")
+    
+    if mejor_eficiencia > 90:
+        insights.append("✅ Excelente participación en las actividades mejor evaluadas")
+    
+    return insights
+
+
+def generar_reporte_paralelo_completo(
+    paralelo: str,
+    fetch_detalle_paralelo_func: Callable[[str], Dict[str, Any]]
+) -> Dict[str, Any]:
+    """
+    Genera un reporte completo y consolidado para un paralelo específico.
+    
+    Combina todas las métricas y análisis en un solo reporte estructurado
+    para presentación en la interfaz de usuario.
+    
+    Args:
+        paralelo: Nombre del paralelo a analizar
+        fetch_detalle_paralelo_func: Función para obtener detalle del paralelo
+        
+    Returns:
+        Dict[str, Any]: Reporte completo con todas las métricas y análisis
+        
+    Example:
+        >>> reporte = generar_reporte_paralelo_completo("Paralelo_1", fetch_detalle_paralelo)
+        >>> print(f"Alumnos: {reporte['resumen_general']['total_alumnos']}")
+        Alumnos: 45
+    """
+    try:
+        # Obtener datos crudos
+        detalle_crudo = fetch_detalle_paralelo_func(paralelo)
+        
+        if not detalle_crudo:
+            return {"error": f"No se pudieron obtener datos para el paralelo {paralelo}"}
+        
+        # Procesar cada componente
+        info_general = detalle_crudo.get("info_general", {})
+        completitud_procesada = procesar_metricas_completitud_paralelo(
+            detalle_crudo.get("completitud", {})
+        )
+        
+        actividades_baja_participacion = detalle_crudo.get("baja_participacion", [])
+        actividades_criticas, actividades_no_criticas = identificar_actividades_problematicas(
+            actividades_baja_participacion
+        )
+        
+        eficiencia_procesada = analizar_eficiencia_actividades(
+            detalle_crudo.get("eficiencia", {})
+        )
+        
+        # Generar resumen ejecutivo
+        resumen_ejecutivo = _generar_resumen_ejecutivo(
+            info_general, completitud_procesada, 
+            len(actividades_criticas), eficiencia_procesada
+        )
+        
+        return {
+            "paralelo": paralelo,
+            "resumen_ejecutivo": resumen_ejecutivo,
+            "resumen_general": info_general,
+            "completitud": completitud_procesada,
+            "actividades_problematicas": {
+                "criticas": actividades_criticas,
+                "no_criticas": actividades_no_criticas,
+                "total": len(actividades_baja_participacion)
+            },
+            "eficiencia": eficiencia_procesada,
+            "timestamp": "2024-01-01"  # En producción, usar datetime.now()
+        }
+        
+    except Exception as e:
+        print(f"❌ Error generando reporte para paralelo {paralelo}: {e}")
+        return {"error": f"Error procesando datos del paralelo: {str(e)}"}
+
+
+def _generar_resumen_ejecutivo(
+    info_general: Dict[str, Any],
+    completitud: Dict[str, Any],
+    total_criticas: int,
+    eficiencia: Dict[str, Any]
+) -> Dict[str, Any]:
+    """
+    Genera un resumen ejecutivo con los puntos más importantes del análisis.
+    
+    Args:
+        info_general: Información general del paralelo
+        completitud: Métricas de completitud procesadas
+        total_criticas: Número de actividades críticas
+        eficiencia: Análisis de eficiencia procesado
+        
+    Returns:
+        Dict[str, Any]: Resumen ejecutivo consolidado
+    """
+    metricas_agregadas = eficiencia.get("metricas_agregadas", {})
+    
+    return {
+        "total_alumnos": info_general.get("total_alumnos", 0),
+        "total_actividades": info_general.get("total_actividades", 0),
+        "nivel_completitud": completitud.get("nivel_completitud", "DESCONOCIDO"),
+        "porcentaje_completitud": completitud.get("porcentaje_completitud_global", 0),
+        "actividades_criticas": total_criticas,
+        "mejor_eficiencia": metricas_agregadas.get("mejor_eficiencia", 0),
+        "peor_eficiencia": metricas_agregadas.get("peor_eficiencia", 0),
+        "brecha_eficiencia": metricas_agregadas.get("brecha_eficiencia", 0),
+        "puntos_fuertes": _identificar_puntos_fuertes(completitud, eficiencia, total_criticas),
+        "areas_mejora": _identificar_areas_mejora(completitud, eficiencia, total_criticas)
+    }
+
+
+def _identificar_puntos_fuertes(
+    completitud: Dict[str, Any],
+    eficiencia: Dict[str, Any],
+    total_criticas: int
+) -> List[str]:
+    """
+    Identifica los puntos fuertes del paralelo basado en las métricas.
+    
+    Args:
+        completitud: Métricas de completitud
+        eficiencia: Análisis de eficiencia
+        total_criticas: Número de actividades críticas
+        
+    Returns:
+        List[str]: Lista de puntos fuertes identificados
+    """
+    puntos_fuertes: List[str] = []
+    
+    nivel_completitud = completitud.get("nivel_completitud", "")
+    porcentaje_completitud = completitud.get("porcentaje_completitud_global", 0)
+    mejor_eficiencia = eficiencia.get("metricas_agregadas", {}).get("mejor_eficiencia", 0)
+    
+    if nivel_completitud in ["EXCELENTE", "BUENO"]:
+        puntos_fuertes.append(f"✅ Completitud global sólida ({porcentaje_completitud:.1f}%)")
+    
+    if mejor_eficiencia > 90:
+        puntos_fuertes.append("🚀 Excelente participación en actividades destacadas")
+    
+    if total_criticas == 0:
+        puntos_fuertes.append("🎯 Sin actividades críticas identificadas")
+    elif total_criticas <= 2:
+        puntos_fuertes.append("📈 Pocas actividades críticas identificadas")
+    
+    return puntos_fuertes
+
+
+def _identificar_areas_mejora(
+    completitud: Dict[str, Any],
+    eficiencia: Dict[str, Any],
+    total_criticas: int
+) -> List[str]:
+    """
+    Identifica las áreas de mejora del paralelo basado en las métricas.
+    
+    Args:
+        completitud: Métricas de completitud
+        eficiencia: Análisis de eficiencia
+        total_criticas: Número de actividades críticas
+        
+    Returns:
+        List[str]: Lista de áreas de mejora identificadas
+    """
+    areas_mejora: List[str] = []
+    
+    nivel_completitud = completitud.get("nivel_completitud", "")
+    porcentaje_completitud = completitud.get("porcentaje_completitud_global", 0)
+    peor_eficiencia = eficiencia.get("metricas_agregadas", {}).get("peor_eficiencia", 0)
+    brecha_eficiencia = eficiencia.get("metricas_agregadas", {}).get("brecha_eficiencia", 0)
+    
+    if nivel_completitud in ["BAJO", "MUY_BAJO"]:
+        areas_mejora.append(f"📚 Mejorar completitud global ({porcentaje_completitud:.1f}%)")
+    
+    if peor_eficiencia < 50:
+        areas_mejora.append(f"💡 Aumentar participación en actividades con baja eficiencia ({peor_eficiencia:.1f}%)")
+    
+    if brecha_eficiencia > 50:
+        areas_mejora.append("⚖️ Reducir brecha entre actividades mejor y peor evaluadas")
+    
+    if total_criticas > 5:
+        areas_mejora.append(f"🎯 Enfocar en {total_criticas} actividades críticas identificadas")
+    
+    return areas_mejora

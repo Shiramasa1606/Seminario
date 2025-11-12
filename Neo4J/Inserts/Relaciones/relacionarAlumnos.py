@@ -503,11 +503,11 @@ def procesar_csv(driver: Driver, recurso_path: Path, tipo_recurso: Literal["Cues
             serie = alumno_data.iloc[0]
 
             # Parsear todos los campos disponibles
-            estado = str(serie[col_estado]).strip() if col_estado and pd.notna(serie[col_estado]) else ""
-            start_iso = parse_fecha_a_iso(str(serie[col_comenzado]).strip() if col_comenzado and pd.notna(serie[col_comenzado]) else "")
-            end_iso = parse_fecha_a_iso(str(serie[col_finalizado]).strip() if col_finalizado and pd.notna(serie[col_finalizado]) else "")
-            duration_seconds = parse_duracion_a_segundos(str(serie[col_duracion]).strip() if col_duracion and pd.notna(serie[col_duracion]) else "")
-            score = parse_calificacion_a_float(str(serie[col_calificacion]).strip() if col_calificacion and pd.notna(serie[col_calificacion]) else "")
+            estado = str(serie[col_estado]).strip() if col_estado and serie[col_estado] is not None and str(serie[col_estado]).strip() != "" else ""
+            start_iso = parse_fecha_a_iso(str(serie[col_comenzado]).strip() if col_comenzado and serie[col_comenzado] is not None and str(serie[col_comenzado]).strip() != "" else "")
+            end_iso = parse_fecha_a_iso(str(serie[col_finalizado]).strip() if col_finalizado and serie[col_finalizado] is not None and str(serie[col_finalizado]).strip() != "" else "")
+            duration_seconds = parse_duracion_a_segundos(str(serie[col_duracion]).strip() if col_duracion and serie[col_duracion] is not None and str(serie[col_duracion]).strip() != "" else "")
+            score = parse_calificacion_a_float(str(serie[col_calificacion]).strip() if col_calificacion and serie[col_calificacion] is not None and str(serie[col_calificacion]).strip() != "" else "")
 
             # Determinar tipo de relación basado en estado y calificación
             tipo_relacion: TipoRelacion = "Intento"

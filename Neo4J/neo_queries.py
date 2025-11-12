@@ -595,6 +595,336 @@ def fetch_actividades_lentas_alumno(correo: str) -> List[Dict[str, Any]]:
     finally:
         driver.close()
 
+# ============================================================================
+# FUNCIONES DE ESTADÍSTICAS DE PARALELO
+# ============================================================================
+
+def fetch_paralelos_disponibles() -> List[Dict[str, str]]:
+    """
+    Obtiene la lista de todos los paralelos disponibles en la base de datos.
+    
+    Consulta todos los valores únicos de la propiedad 'paralelo' en los nodos Alumno,
+    excluyendo valores nulos o vacíos y ordenando alfabéticamente.
+    
+    Returns:
+        List[Dict[str, str]]: Lista de paralelos con su nombre
+        Ejemplo: [{"paralelo": "Paralelo_1"}, {"paralelo": "Paralelo_2"}, ...]
+        
+    Example:
+        >>> paralelos = fetch_paralelos_disponibles()
+        >>> print([p["paralelo"] for p in paralelos])
+        ['Paralelo_1', 'Paralelo_2', 'Paralelo_3']
+    """
+    driver: Driver = obtener_driver()
+    cypher = """
+    MATCH (a:Alumno)
+    WHERE a.paralelo IS NOT NULL AND a.paralelo <> ""
+    RETURN DISTINCT a.paralelo AS paralelo
+    ORDER BY a.paralelo
+    """
+    try:
+        with driver.session() as session:
+            result = session.run(cypher)
+            paralelos: List[Dict[str, str]] = [
+                {"paralelo": str(record["paralelo"])}
+                for record in result
+                if record.get("paralelo")
+            ]
+            return paralelos
+    finally:
+        driver.close()
+
+
+def fetch_estadisticas_completitud_paralelo(paralelo: str) -> Dict[str, Any]:
+    """
+    Obtiene métricas de completitud global para un paralelo específico.
+    
+    Calcula:
+    - Total de actividades disponibles (excluyendo RAPs)
+    - Número de actividades completadas por todos los alumnos del paralelo
+    - Promedio de actividades completadas por alumno
+    - Porcentaje de completitud global
+    
+    Args:
+        paralelo: Nombre del paralelo a analizar
+        
+    Returns:
+        Dict[str, Any]: Estadísticas de completitud con:
+            - total_actividades: int
+            - actividades_completadas_todos: int  
+            - promedio_completadas_por_alumno: float
+            - porcentaje_completitud_global: float
+            - total_alumnos: int
+            
+    Example:
+        >>> stats = fetch_estadisticas_completitud_paralelo("Paralelo_1")
+        >>> print(f"Completitud: {stats['porcentaje_completitud_global']:.1f}%")
+        Completitud: 75.5%
+    """
+    driver: Driver = obtener_driver()
+    cypher = """
+    // Contar total de alumnos en el paralelo
+    MATCH (a:Alumno {paralelo: $paralelo})
+    WITH count(a) as total_alumnos
+    
+    // Obtener todas las actividades disponibles (excluyendo RAPs)
+    MATCH (act:Cuestionario|Ayudantia)
+    WHERE NOT 'RAP' IN labels(act)
+    WITH total_alumnos, collect(act) as todas_actividades, count(act) as total_actividades  // ✅ CORREGIDO
+
+    // Para cada actividad, contar cuántos alumnos la han completado
+    UNWIND todas_actividades as actividad
+    OPTIONAL MATCH (a:Alumno {paralelo: $paralelo})-[:Completado|Perfecto]->(actividad)
+    WITH 
+        total_alumnos,
+        total_actividades,  // ✅ USAMOS EL COUNT CORRECTO
+        actividad,
+        count(a) as alumnos_completados
+    
+    // Calcular métricas
+    RETURN 
+        total_actividades,
+        total_alumnos,
+        count(CASE WHEN alumnos_completados = total_alumnos THEN 1 END) as actividades_completadas_todos,
+        avg(alumnos_completados) as promedio_completadas_por_alumno,
+        (sum(alumnos_completados) * 100.0) / (total_actividades * total_alumnos) as porcentaje_completitud_global
+    """
+    try:
+        with driver.session() as session:
+            result = session.run(cypher, paralelo=paralelo)
+            record = result.single()
+            
+            if not record:
+                return {
+                    "total_actividades": 0,
+                    "actividades_completadas_todos": 0,
+                    "promedio_completadas_por_alumno": 0.0,
+                    "porcentaje_completitud_global": 0.0,
+                    "total_alumnos": 0
+                }
+            
+            return {
+                "total_actividades": record["total_actividades"] or 0,
+                "actividades_completadas_todos": record["actividades_completadas_todos"] or 0,
+                "promedio_completadas_por_alumno": float(record["promedio_completadas_por_alumno"] or 0),
+                "porcentaje_completitud_global": float(record["porcentaje_completitud_global"] or 0),
+                "total_alumnos": record["total_alumnos"] or 0
+            }
+    finally:
+        driver.close()
+
+
+def fetch_actividades_baja_participacion(paralelo: str, umbral_participacion: float = 0.5) -> List[Dict[str, Any]]:
+    """
+    Identifica actividades con baja participación en un paralelo.
+    
+    Una actividad tiene baja participación si menos del umbral especificado
+    de alumnos tiene al menos un estado 'Completado' o 'Perfecto'.
+    
+    Args:
+        paralelo: Nombre del paralelo a analizar
+        umbral_participacion: Umbral de participación (0.5 = 50% por defecto)
+        
+    Returns:
+        List[Dict[str, Any]]: Lista de actividades con baja participación con:
+            - tipo: str (Cuestionario/Ayudantia)
+            - nombre: str
+            - alumnos_completados: int
+            - total_alumnos: int
+            - porcentaje_participacion: float
+            - critico: bool (si participación < 25%)
+            
+    Example:
+        >>> bajas = fetch_actividades_baja_participacion("Paralelo_1", 0.5)
+        >>> print(f"Actividades críticas: {len([a for a in bajas if a['critico']])}")
+        Actividades críticas: 3
+    """
+    driver: Driver = obtener_driver()
+    cypher = """
+    // Contar total de alumnos en el paralelo
+    MATCH (a:Alumno {paralelo: $paralelo})
+    WITH count(a) as total_alumnos
+    
+    // Para cada actividad, contar alumnos que la han completado
+    MATCH (act:Cuestionario|Ayudantia)
+    WHERE NOT 'RAP' IN labels(act)
+    OPTIONAL MATCH (alumno:Alumno {paralelo: $paralelo})-[:Completado|Perfecto]->(act)
+    
+    WITH 
+        total_alumnos,
+        labels(act)[0] as tipo,
+        act.nombre as nombre,
+        count(alumno) as alumnos_completados,
+        (count(alumno) * 100.0 / total_alumnos) as porcentaje_participacion
+    
+    WHERE porcentaje_participacion < $umbral_porcentaje
+    
+    RETURN 
+        tipo,
+        nombre,
+        alumnos_completados,
+        total_alumnos,
+        porcentaje_participacion
+    
+    ORDER BY porcentaje_participacion ASC
+    """
+    try:
+        with driver.session() as session:
+            # Convertir umbral a porcentaje
+            umbral_porcentaje = umbral_participacion * 100
+            result = session.run(cypher, paralelo=paralelo, umbral_porcentaje=umbral_porcentaje)
+            
+            actividades: List[Dict[str, Any]] = []
+            for record in result:
+                porcentaje = float(record["porcentaje_participacion"] or 0)
+                actividad: Dict[str, Any] = {
+                    "tipo": str(record["tipo"]),
+                    "nombre": str(record["nombre"]),
+                    "alumnos_completados": int(record["alumnos_completados"] or 0),
+                    "total_alumnos": int(record["total_alumnos"] or 0),
+                    "porcentaje_participacion": porcentaje,
+                    "critico": porcentaje < 25.0  # Menos del 25% es crítico
+                }
+                actividades.append(actividad)
+            
+            return actividades
+    finally:
+        driver.close()
+
+
+def fetch_actividades_eficiencia_paralelo(paralelo: str, top_n: int = 3) -> Dict[str, List[Dict[str, Any]]]:
+    """
+    Analiza la eficiencia de actividades en un paralelo y retorna las mejores y peores.
+    
+    La eficiencia se calcula como:
+    (Perfectos + Completados) / Total Alumnos * 100
+    
+    Args:
+        paralelo: Nombre del paralelo a analizar
+        top_n: Número de actividades a retornar en cada categoría (default: 3)
+        
+    Returns:
+        Dict[str, List[Dict[str, Any]]]: Diccionario con:
+            - "mejores": Lista de actividades con mayor eficiencia
+            - "peores": Lista de actividades con menor eficiencia
+        Cada actividad incluye:
+            - tipo: str
+            - nombre: str  
+            - eficiencia: float
+            - total_perfectos: int
+            - total_completados: int
+            - total_alumnos: int
+            
+    Example:
+        >>> eficiencia = fetch_actividades_eficiencia_paralelo("Paralelo_1")
+        >>> print(f"Mejor actividad: {eficiencia['mejores'][0]['nombre']}")
+        Mejor actividad: Cuestionario_1
+    """
+    driver: Driver = obtener_driver()
+    cypher = """
+    // Contar total de alumnos en el paralelo
+    MATCH (a:Alumno {paralelo: $paralelo})
+    WITH count(a) as total_alumnos
+    
+    // Para cada actividad, contar estados
+    MATCH (act:Cuestionario|Ayudantia)
+    WHERE NOT 'RAP' IN labels(act)
+    OPTIONAL MATCH (alumno:Alumno {paralelo: $paralelo})-[r]->(act)
+    WHERE type(r) IN ["Completado", "Perfecto"]
+    
+    WITH 
+        total_alumnos,
+        labels(act)[0] as tipo,
+        act.nombre as nombre,
+        count(CASE WHEN type(r) = "Perfecto" THEN 1 END) as total_perfectos,
+        count(CASE WHEN type(r) = "Completado" THEN 1 END) as total_completados,
+        count(r) as total_relaciones_exitosas
+    
+    // Calcular eficiencia
+    WITH 
+        tipo, nombre, total_perfectos, total_completados, total_alumnos,
+        (total_relaciones_exitosas * 100.0 / total_alumnos) as eficiencia
+    
+    RETURN 
+        tipo,
+        nombre,
+        eficiencia,
+        total_perfectos,
+        total_completados,
+        total_alumnos
+    
+    ORDER BY eficiencia DESC
+    """
+    try:
+        with driver.session() as session:
+            result = session.run(cypher, paralelo=paralelo)
+            todas_actividades: List[Dict[str, Any]] = []
+            
+            for record in result:
+                actividad: Dict[str, Any] = {
+                    "tipo": str(record["tipo"]),
+                    "nombre": str(record["nombre"]),
+                    "eficiencia": float(record["eficiencia"] or 0),
+                    "total_perfectos": int(record["total_perfectos"] or 0),
+                    "total_completados": int(record["total_completados"] or 0),
+                    "total_alumnos": int(record["total_alumnos"] or 0)
+                }
+                todas_actividades.append(actividad)
+            
+            # Separar en mejores y peores
+            mejores = todas_actividades[:top_n]
+            peores = todas_actividades[-top_n:] if len(todas_actividades) > top_n else todas_actividades
+            peores.reverse()  # Para que las peores aparezcan de mayor a menor problema
+            
+            return {
+                "mejores": mejores,
+                "peores": peores
+            }
+    finally:
+        driver.close()
+
+
+def fetch_detalle_paralelo(paralelo: str) -> Dict[str, Any]:
+    """
+    Obtiene un análisis completo y consolidado de un paralelo.
+    
+    Combina todas las métricas en un solo diccionario para facilitar
+    la presentación en el sistema.
+    
+    Args:
+        paralelo: Nombre del paralelo a analizar
+        
+    Returns:
+        Dict[str, Any]: Diccionario consolidado con todas las estadísticas:
+            - info_general: Dict con totales
+            - completitud: Dict con métricas de completitud
+            - baja_participacion: List de actividades problemáticas
+            - eficiencia: Dict con mejores y peores actividades
+            
+    Example:
+        >>> detalle = fetch_detalle_paralelo("Paralelo_1")
+        >>> print(f"Alumnos: {detalle['info_general']['total_alumnos']}")
+        Alumnos: 45
+    """
+    # Obtener todas las métricas
+    completitud = fetch_estadisticas_completitud_paralelo(paralelo)
+    baja_participacion = fetch_actividades_baja_participacion(paralelo)
+    eficiencia = fetch_actividades_eficiencia_paralelo(paralelo)
+    
+    # Consolidar información general
+    info_general: Dict[str, Any] = {
+        "total_alumnos": completitud["total_alumnos"],
+        "total_actividades": completitud["total_actividades"],
+        "actividades_criticas": len([a for a in baja_participacion if a["critico"]]),
+        "actividades_baja_participacion": len(baja_participacion)
+    }
+    
+    return {
+        "info_general": info_general,
+        "completitud": completitud,
+        "baja_participacion": baja_participacion,
+        "eficiencia": eficiencia
+    }
 
 __all__ = [
     'fetch_alumnos',
@@ -605,5 +935,11 @@ __all__ = [
     'fetch_estadisticas_globales',
     'fetch_estadisticas_alumno',
     'fetch_verificar_alumno_perfecto',
-    'fetch_actividades_lentas_alumno'
+    'fetch_actividades_lentas_alumno',
+    # Nuevas funciones de estadísticas de paralelo
+    'fetch_paralelos_disponibles',
+    'fetch_estadisticas_completitud_paralelo', 
+    'fetch_actividades_baja_participacion',
+    'fetch_actividades_eficiencia_paralelo',
+    'fetch_detalle_paralelo'
 ]

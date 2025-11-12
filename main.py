@@ -57,7 +57,8 @@ def mostrar_menu_principal() -> str:
     print("="*40)
     print("1. Ejecutar inserción de datos (rellenar grafo)")
     print("2. Consultar alumnos y progreso")
-    print("3. Ver estadísticas del sistema")
+    print("3. 📊 Estadísticas de Paralelo")
+    print("4. 📈 Estadísticas del Sistema")
     print("0. Salir")
     return input("\nSeleccione una opción: ").strip()
 
@@ -768,6 +769,214 @@ def ver_estadisticas_sistema() -> None:
     mostrar_estadisticas_rapidas()
     input("\n📝 Presione Enter para continuar...")
 
+# ============================================================
+# FUNCIONES DE ESTADÍSTICAS DE PARALELO
+# ============================================================
+
+def mostrar_menu_paralelos() -> str:
+    """Muestra el menú de estadísticas de paralelo."""
+    print("\n" + "="*40)
+    print("📊 ESTADÍSTICAS DE PARALELO")
+    print("="*40)
+    print("1. Ver lista de paralelos disponibles")
+    print("2. Analizar paralelo específico")
+    print("0. ↩️ Volver al menú principal")
+    return input("\nSeleccione una opción: ").strip()
+
+
+def ver_lista_paralelos() -> None:
+    """Muestra la lista de todos los paralelos disponibles."""
+    from Neo4J.neo_queries import fetch_paralelos_disponibles
+    from Neo4J.consultar import obtener_lista_paralelos_procesada
+    
+    print("\n" + "📋 PARALELOS DISPONIBLES")
+    print("=" * 40)
+    
+    try:
+        paralelos = obtener_lista_paralelos_procesada(fetch_paralelos_disponibles)
+        
+        if not paralelos:
+            print("⚠️ No se encontraron paralelos en la base de datos")
+            return
+        
+        print(f"🎯 Total de paralelos encontrados: {len(paralelos)}\n")
+        
+        for i, paralelo in enumerate(paralelos, 1):
+            print(f"{i}. {paralelo}")
+            
+    except Exception as e:
+        print(f"❌ Error obteniendo lista de paralelos: {e}")
+
+
+def analizar_paralelo_especifico() -> None:
+    """Permite seleccionar y analizar un paralelo específico."""
+    from Neo4J.neo_queries import fetch_paralelos_disponibles, fetch_detalle_paralelo
+    from Neo4J.consultar import obtener_lista_paralelos_procesada, generar_reporte_paralelo_completo
+    
+    print("\n" + "🔍 ANALIZAR PARALELO ESPECÍFICO")
+    print("=" * 40)
+    
+    try:
+        # Obtener lista de paralelos
+        paralelos = obtener_lista_paralelos_procesada(fetch_paralelos_disponibles)
+        
+        if not paralelos:
+            print("⚠️ No se encontraron paralelos en la base de datos")
+            return
+        
+        # Mostrar lista numerada
+        print("Paralelos disponibles:\n")
+        for i, paralelo in enumerate(paralelos, 1):
+            print(f"{i}. {paralelo}")
+        
+        # Seleccionar paralelo
+        try:
+            seleccion = int(input(f"\nSeleccione un paralelo (1-{len(paralelos)}): ").strip())
+        except ValueError:
+            print("❌ Ingrese un número válido")
+            return
+        
+        if not (1 <= seleccion <= len(paralelos)):
+            print(f"❌ Ingrese un número entre 1 y {len(paralelos)}")
+            return
+        
+        paralelo_seleccionado = paralelos[seleccion - 1]
+        
+        print(f"\n⏳ Analizando paralelo: {paralelo_seleccionado}...")
+        
+        # Generar reporte completo
+        reporte = generar_reporte_paralelo_completo(paralelo_seleccionado, fetch_detalle_paralelo)
+        
+        if "error" in reporte:
+            print(f"❌ {reporte['error']}")
+            return
+        
+        # Mostrar reporte
+        _mostrar_reporte_paralelo(reporte)
+        
+    except Exception as e:
+        print(f"❌ Error analizando paralelo: {e}")
+
+
+def _mostrar_reporte_paralelo(reporte: Dict[str, Any]) -> None:
+    """Muestra el reporte completo de un paralelo con formato visual."""
+    paralelo = reporte.get("paralelo", "Desconocido")
+    resumen_ejecutivo = reporte.get("resumen_ejecutivo", {})
+    completitud = reporte.get("completitud", {})
+    actividades_problematicas = reporte.get("actividades_problematicas", {})
+    eficiencia = reporte.get("eficiencia", {})
+    
+    print("\n" + "📊 REPORTE COMPLETO DEL PARALELO")
+    print("=" * 60)
+    print(f"🎯 Paralelo: {paralelo}")
+    
+    # Resumen ejecutivo
+    print(f"\n🌟 RESUMEN EJECUTIVO")
+    print("-" * 30)
+    print(f"👥 Alumnos: {resumen_ejecutivo.get('total_alumnos', 0)}")
+    print(f"📚 Actividades: {resumen_ejecutivo.get('total_actividades', 0)}")
+    print(f"📈 Completitud: {resumen_ejecutivo.get('porcentaje_completitud', 0):.1f}%")
+    print(f"⚠️  Actividades críticas: {resumen_ejecutivo.get('actividades_criticas', 0)}")
+    print(f"🎯 Mejor eficiencia: {resumen_ejecutivo.get('mejor_eficiencia', 0):.1f}%")
+    print(f"📉 Peor eficiencia: {resumen_ejecutivo.get('peor_eficiencia', 0):.1f}%")
+    
+    # Puntos fuertes y áreas de mejora
+    puntos_fuertes = resumen_ejecutivo.get('puntos_fuertes', [])
+    areas_mejora = resumen_ejecutivo.get('areas_mejora', [])
+    
+    if puntos_fuertes:
+        print(f"\n💪 PUNTOS FUERTES")
+        print("-" * 20)
+        for punto in puntos_fuertes:
+            print(f"  ✅ {punto}")
+    
+    if areas_mejora:
+        print(f"\n🎯 ÁREAS DE MEJORA")
+        print("-" * 20)
+        for area in areas_mejora:
+            print(f"  🔄 {area}")
+    
+    # Completitud detallada
+    print(f"\n📊 COMPLETITUD DETALLADA")
+    print("-" * 25)
+    print(f"• Actividades totales: {completitud.get('total_actividades', 0)}")
+    print(f"• Completadas por todos: {completitud.get('actividades_completadas_todos', 0)}")
+    print(f"• Promedio por alumno: {completitud.get('promedio_completadas_por_alumno', 0):.1f}")
+    print(f"• Completitud global: {completitud.get('porcentaje_completitud_global', 0):.1f}%")
+    print(f"• Nivel: {completitud.get('nivel_completitud', 'Desconocido')}")
+    
+    # Actividades problemáticas
+    actividades_criticas = actividades_problematicas.get('criticas', [])
+    actividades_no_criticas = actividades_problematicas.get('no_criticas', [])
+    total_problematicas = actividades_problematicas.get('total', 0)
+    
+    if total_problematicas > 0:
+        print(f"\n⚠️  ACTIVIDADES CON BAJA PARTICIPACIÓN")
+        print("-" * 35)
+        print(f"• Total: {total_problematicas} actividades")
+        print(f"• Críticas (<25%): {len(actividades_criticas)}")
+        print(f"• No críticas: {len(actividades_no_criticas)}")
+        
+        if actividades_criticas:
+            print(f"\n🔴 ACTIVIDADES CRÍTICAS (prioridad alta):")
+            for i, act in enumerate(actividades_criticas[:5], 1):  # Mostrar máximo 5
+                print(f"  {i}. {act.get('nombre', 'Desconocida')} ({act.get('tipo', 'Desconocido')})")
+                print(f"     Participación: {act.get('porcentaje_participacion', 0):.1f}%")
+        
+        if actividades_no_criticas:
+            print(f"\n🟡 ACTIVIDADES CON BAJA PARTICIPACIÓN:")
+            for i, act in enumerate(actividades_no_criticas[:3], 1):  # Mostrar máximo 3
+                print(f"  {i}. {act.get('nombre', 'Desconocida')} ({act.get('tipo', 'Desconocido')})")
+                print(f"     Participación: {act.get('porcentaje_participacion', 0):.1f}%")
+    
+    # Eficiencia
+    metricas_eficiencia = eficiencia.get('metricas_agregadas', {})
+    mejores = eficiencia.get('mejores', [])
+    peores = eficiencia.get('peores', [])
+    insights = eficiencia.get('insights', [])
+    
+    print(f"\n⚡ EFICIENCIA DE ACTIVIDADES")
+    print("-" * 30)
+    print(f"• Mejor eficiencia: {metricas_eficiencia.get('mejor_eficiencia', 0):.1f}%")
+    print(f"• Peor eficiencia: {metricas_eficiencia.get('peor_eficiencia', 0):.1f}%")
+    print(f"• Brecha de eficiencia: {metricas_eficiencia.get('brecha_eficiencia', 0):.1f}%")
+    
+    if mejores:
+        print(f"\n🟢 TOP 3 ACTIVIDADES MÁS EFICIENTES:")
+        for i, act in enumerate(mejores[:3], 1):
+            print(f"  {i}. {act.get('nombre', 'Desconocida')} ({act.get('tipo', 'Desconocido')})")
+            print(f"     Eficiencia: {act.get('eficiencia', 0):.1f}%")
+            print(f"     Perfectos: {act.get('total_perfectos', 0)} | Completados: {act.get('total_completados', 0)}")
+    
+    if peores:
+        print(f"\n🔴 TOP 3 ACTIVIDADES MENOS EFICIENTES:")
+        for i, act in enumerate(peores[:3], 1):
+            print(f"  {i}. {act.get('nombre', 'Desconocida')} ({act.get('tipo', 'Desconocido')})")
+            print(f"     Eficiencia: {act.get('eficiencia', 0):.1f}%")
+            print(f"     Perfectos: {act.get('total_perfectos', 0)} | Completados: {act.get('total_completados', 0)}")
+    
+    if insights:
+        print(f"\n💡 INSIGHTS AUTOMÁTICOS:")
+        for insight in insights:
+            print(f"  • {insight}")
+
+
+def manejar_estadisticas_paralelo() -> None:
+    """Maneja el flujo completo de estadísticas de paralelo."""
+    while True:
+        limpiar_consola()
+        opcion = mostrar_menu_paralelos()
+
+        if opcion == "1":
+            ver_lista_paralelos()
+        elif opcion == "2":
+            analizar_paralelo_especifico()
+        elif opcion == "0":
+            break
+        else:
+            print("❌ Opción no válida")
+        
+        input("\n📝 Presione Enter para continuar...")
 
 # ============================================================
 # Bucle Principal del Sistema
@@ -845,6 +1054,9 @@ def main() -> None:
                     input("\nPresione Enter para continuar...")
 
         elif opcion == "3":
+            manejar_estadisticas_paralelo()
+
+        elif opcion == "4":
             ver_estadisticas_sistema()
 
         elif opcion == "0":
@@ -856,6 +1068,8 @@ def main() -> None:
         else:
             print("❌ Opción no válida")
             input("\nPresione Enter para continuar...")
+
+
 
 
 if __name__ == "__main__":
