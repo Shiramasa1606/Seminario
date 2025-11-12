@@ -1,20 +1,57 @@
+"""
+Sistema de Recomendación de Aprendizaje - Interfaz Principal
+
+Interfaz de consola que proporciona acceso a todas las funcionalidades del sistema:
+- Inicialización de datos en Neo4J
+- Consulta de progreso de alumnos
+- Recomendaciones personalizadas
+- Análisis avanzado de rendimiento
+- Estadísticas del sistema
+
+Módulos integrados:
+- Neo4J.conn: Gestión de conexiones a la base de datos
+- Neo4J.neo_queries: Consultas básicas a Neo4J
+- Neo4J.consultar: Lógica de recomendaciones y análisis
+- Neo4J.Inserts.insertMain: Inicialización de datos
+"""
+
 import os
 from typing import Any, Dict, List
-from Neo4J.conn import obtener_driver
-from Neo4J.neo_queries import fetch_alumnos, fetch_progreso_alumno, fetch_siguiente_actividad, fetch_verificar_alumno_perfecto, fetch_estadisticas_globales, fetch_estadisticas_alumno
-from Neo4J.consultar import recomendar_siguiente_from_progress, generar_roadmap_from_progress_and_fetcher, analizar_rendimiento_comparativo, formatear_tiempo_analisis
-from Neo4J.Inserts.insertMain import rellenarGrafo, mostrar_estadisticas_rapidas
 
+# Importaciones organizadas por módulo
+from Neo4J.Inserts.insertMain import mostrar_estadisticas_rapidas, rellenarGrafo
+from Neo4J.conn import obtener_driver
+from Neo4J.consultar import (
+    analizar_rendimiento_comparativo,
+    formatear_tiempo_analisis,
+    generar_roadmap_from_progress_and_fetcher,
+    recomendar_siguiente_from_progress,
+)
+from Neo4J.neo_queries import (
+    fetch_actividades_lentas_alumno,
+    fetch_alumnos,
+    fetch_estadisticas_alumno,
+    fetch_estadisticas_globales,
+    fetch_progreso_alumno,
+    fetch_siguiente_actividad,
+    fetch_verificar_alumno_perfecto,
+)
+
+# Inicializar driver de Neo4J
 driver = obtener_driver()
 
+
 # ============================================================
-# Funciones de consola
+# Funciones de Utilidad de Consola
 # ============================================================
 
 def limpiar_consola() -> None:
+    """Limpia la pantalla de la consola según el sistema operativo."""
     os.system('cls' if os.name == 'nt' else 'clear')
 
+
 def mostrar_menu_principal() -> str:
+    """Muestra el menú principal y retorna la opción seleccionada."""
     print("\n" + "="*40)
     print("🎯 SISTEMA DE RECOMENDACIÓN DE APRENDIZAJE")
     print("="*40)
@@ -24,7 +61,9 @@ def mostrar_menu_principal() -> str:
     print("0. Salir")
     return input("\nSeleccione una opción: ").strip()
 
+
 def mostrar_menu_alumno(nombre: str) -> str:
+    """Muestra el menú específico para un alumno."""
     print(f"\n=== Alumno: {nombre} ===")
     print("1. 📊 Ver progreso")
     print("2. 🎯 Siguiente actividad recomendada")
@@ -33,13 +72,20 @@ def mostrar_menu_alumno(nombre: str) -> str:
     print("0. ↩️ Volver al menú principal")
     return input("\nSeleccione una opción: ").strip()
 
+
 # ============================================================
-# Funciones de análisis detallado
+# Funciones de Análisis y Presentación de Datos
 # ============================================================
 
 def _obtener_datos_analisis_detallado(analisis: Dict[str, Any]) -> List[Dict[str, Any]]:
     """
-    Procesa el análisis y devuelve datos estructurados para presentación
+    Procesa el análisis y estructura los datos para presentación.
+    
+    Args:
+        analisis: Diccionario con datos de análisis comparativo
+        
+    Returns:
+        Lista de actividades con datos estructurados para visualización
     """
     comparativas: List[Dict[str, Any]] = analisis.get("comparativas", [])
     datos_actividades: List[Dict[str, Any]] = []
@@ -58,7 +104,7 @@ def _obtener_datos_analisis_detallado(analisis: Dict[str, Any]) -> List[Dict[str
             "emoji_eficiencia": ""
         }
         
-        # Calcular mensaje de eficiencia
+        # Calcular mensaje de eficiencia basado en diferencia porcentual
         diferencia = actividad_data["diferencia_porcentual"]
         if diferencia < -10:
             actividad_data["mensaje_eficiencia"] = f"🚀 Eres {abs(diferencia):.1f}% más rápido que el promedio"
@@ -67,7 +113,7 @@ def _obtener_datos_analisis_detallado(analisis: Dict[str, Any]) -> List[Dict[str
         else:
             actividad_data["mensaje_eficiencia"] = "📊 Tu tiempo está en el promedio"
         
-        # Asignar emoji de categoría
+        # Asignar emoji según categoría de eficiencia
         if actividad_data["categoria_eficiencia"]:
             emoji_eficiencia = {
                 "MUY_EFICIENTE": "🚀",
@@ -84,11 +130,10 @@ def _obtener_datos_analisis_detallado(analisis: Dict[str, Any]) -> List[Dict[str
 
 
 def _mostrar_analisis_detallado(analisis: Dict[str, Any]) -> None:
-    """Muestra el análisis detallado actividad por actividad"""
+    """Muestra el análisis detallado actividad por actividad con formato visual."""
     print(f"\n" + "📈 ANÁLISIS DETALLADO POR ACTIVIDAD")
     print("=" * 70)
     
-    # Obtener datos procesados
     actividades_data = _obtener_datos_analisis_detallado(analisis)
     
     for actividad in actividades_data:
@@ -106,31 +151,37 @@ def _mostrar_analisis_detallado(analisis: Dict[str, Any]) -> None:
 
 def _obtener_resumen_analisis(analisis: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Genera un resumen estadístico del análisis
+    Genera un resumen estadístico del análisis comparativo.
+    
+    Args:
+        analisis: Datos de análisis completos
+        
+    Returns:
+        Resumen con métricas agregadas y tops de actividades
     """
     actividades_data = _obtener_datos_analisis_detallado(analisis)
     
     if not actividades_data:
         return {}
     
-    # Calcular estadísticas
+    # Calcular estadísticas generales
     total_actividades = len(actividades_data)
     actividades_eficientes = len([a for a in actividades_data if a['diferencia_porcentual'] < -10])
     actividades_promedio = len([a for a in actividades_data if -10 <= a['diferencia_porcentual'] <= 10])
     actividades_lentas = len([a for a in actividades_data if a['diferencia_porcentual'] > 10])
     
-    # Actividades más problemáticas (mayor diferencia de tiempo)
+    # Identificar actividades más problemáticas
     actividades_mas_lentas = sorted(
         [a for a in actividades_data if a['diferencia_porcentual'] > 0],
         key=lambda x: x['diferencia_porcentual'],
         reverse=True
-    )[:3]  # Top 3 más lentas
+    )[:3]
     
-    # Actividades más eficientes
+    # Identificar actividades más eficientes
     actividades_mas_eficientes = sorted(
         [a for a in actividades_data if a['diferencia_porcentual'] < 0],
         key=lambda x: x['diferencia_porcentual']
-    )[:3]  # Top 3 más eficientes
+    )[:3]
     
     return {
         "total_actividades": total_actividades,
@@ -144,7 +195,7 @@ def _obtener_resumen_analisis(analisis: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _mostrar_resumen_analisis(analisis: Dict[str, Any]) -> None:
-    """Muestra un resumen ejecutivo del análisis"""
+    """Muestra un resumen ejecutivo del análisis con métricas clave."""
     resumen = _obtener_resumen_analisis(analisis)
     
     if not resumen:
@@ -168,11 +219,18 @@ def _mostrar_resumen_analisis(analisis: Dict[str, Any]) -> None:
         for i, actividad in enumerate(resumen['actividades_mas_eficientes'], 1):
             print(f"   {i}. {actividad['nombre']} ({abs(actividad['diferencia_porcentual']):.1f}% más rápido)")
 
+
 # ============================================================
-# Funciones de opciones MEJORADAS
+# Funciones Principales de Opciones del Menú
 # ============================================================
 
 def ver_progreso_alumno(correo: str) -> None:
+    """
+    Muestra el progreso detallado de un alumno con estadísticas agrupadas.
+    
+    Args:
+        correo: Correo electrónico del alumno a consultar
+    """
     progreso = fetch_progreso_alumno(correo)
     if not progreso:
         print("⚠️ No hay progreso registrado para este alumno")
@@ -212,7 +270,7 @@ def ver_progreso_alumno(correo: str) -> None:
             print(f"\n{estado} ({len(actividades)} actividades):")
             print("-" * 40)
             
-            # Agrupar por tipo de actividad (usando nombre diferente)
+            # Agrupar por tipo de actividad
             actividades_agrupadas_por_tipo: Dict[str, List[Dict[str, Any]]] = {}
             for actividad in actividades:
                 tipo_act: str = str(actividad.get('tipo', 'Desconocido'))
@@ -236,7 +294,7 @@ def ver_progreso_alumno(correo: str) -> None:
                     
                     print(f"     • {nombre_act}{info_extra}")
     
-    # Resumen por tipo de actividad (usando nombre diferente)
+    # Resumen por tipo de actividad
     print("\n" + "🎯 RESUMEN POR TIPO DE ACTIVIDAD")
     print("-" * 40)
     
@@ -265,7 +323,14 @@ def ver_progreso_alumno(correo: str) -> None:
         if estadisticas['perfectos'] > 0:
             print(f"     • 🏆 Perfectas: {estadisticas['perfectos']}")
 
+
 def ver_siguiente_actividad_alumno(correo: str) -> None:
+    """
+    Muestra la siguiente actividad recomendada para un alumno con análisis contextual.
+    
+    Args:
+        correo: Correo electrónico del alumno
+    """
     progreso = fetch_progreso_alumno(correo)
     if not progreso:
         print("⚠️ No hay progreso registrado para este alumno")
@@ -297,11 +362,11 @@ def ver_siguiente_actividad_alumno(correo: str) -> None:
     print("\n" + "🎯 SIGUIENTE ACTIVIDAD RECOMENDADA")
     print("=" * 60)
     
-    # Emojis y títulos según estrategia
+    # Configuración visual según estrategia
     estrategia_config = {
         "refuerzo": ("🔄", "REFUERZO - TERMINAR ACTIVIDAD PENDIENTE"),
         "mejora": ("📈", "MEJORA - BUSCAR LA PERFECCIÓN"), 
-        "avance": ("🚀", "AVANCE - NUEVO DESAFÍO"),
+        "nuevas": ("🚀", "NUEVO DESAFÍO"),
         "inicio": ("🎯", "INICIO - COMENZAR EL APRENDIZAJE")
     }.get(estrategia, ("📌", estrategia.upper()))
     
@@ -312,7 +377,7 @@ def ver_siguiente_actividad_alumno(correo: str) -> None:
     print(f"📚 Tipo: {act.get('tipo', 'Desconocido')}")
     print(f"📖 Actividad: {act.get('nombre', 'Sin nombre')}")
     
-    # MENSAJES ESPECÍFICOS SEGÚN ESTRATEGIA
+    # Mensajes específicos según estrategia
     if estrategia == "refuerzo":
         print(f"\n🔍 **ANÁLISIS DE TU SITUACIÓN:**")
         print(f"   • 📅 Esta actividad está en estado 'Intento'")
@@ -324,11 +389,6 @@ def ver_siguiente_actividad_alumno(correo: str) -> None:
         print(f"   • 2️⃣ **Identifica dificultades**: ¿Qué conceptos te causan problemas?")
         print(f"   • 3️⃣ **Practica**: Resuelve ejercicios similares")
         print(f"   • 4️⃣ **Reintenta**: Completa la actividad al 100%")
-        
-        print(f"\n⏱️  **GESTIÓN DEL TIEMPO:**")
-        print(f"   • 🕒 Dedica al menos 30-45 minutos seguidos")
-        print(f"   • ⏸️  Toma descansos cortos cada 25 minutos")
-        print(f"   • 📝 Anota tus dudas para consultar después")
         
     elif estrategia == "mejora":
         print(f"\n🔍 **ANÁLISIS DE TU SITUACIÓN:**")
@@ -342,12 +402,7 @@ def ver_siguiente_actividad_alumno(correo: str) -> None:
         print(f"   • 3️⃣ **Practica selectiva**: Enfócate en tus áreas débiles")
         print(f"   • 4️⃣ **Perfecciona**: Busca el 100% de calificación")
         
-        print(f"\n🎯 **OBJETIVO DE CALIDAD:**")
-        print(f"   • ⭐ No se trata solo de terminar, sino de dominar")
-        print(f"   • 📈 La práctica deliberada lleva a la excelencia")
-        print(f"   • 🏆 El 'Perfecto' demuestra comprensión completa")
-        
-    elif estrategia == "avance":
+    elif estrategia == "nuevas":
         print(f"\n🔍 **ANÁLISIS DE TU SITUACIÓN:**")
         print(f"   • 🏆 Tienes actividades en estado 'Perfecto'")
         print(f"   • 📚 Demuestras dominio de los temas anteriores")
@@ -358,11 +413,6 @@ def ver_siguiente_actividad_alumno(correo: str) -> None:
         print(f"   • 2️⃣ **Aplica conocimiento**: Usa lo aprendido en lo nuevo")
         print(f"   • 3️⃣ **Conecta conceptos**: Relaciona con temas anteriores")
         print(f"   • 4️⃣ **Profundiza**: Ve más allá de lo básico")
-        
-        print(f"\n🌟 **MANTENIENDO EL ÉXITO:**")
-        print(f"   • 📚 El aprendizaje continuo es clave")
-        print(f"   • 💪 Tu consistencia te ha traído hasta aquí")
-        print(f"   • 🎯 Sigue desafiándote a ti mismo")
         
     elif estrategia == "inicio":
         print(f"\n🔍 **ANÁLISIS DE TU SITUACIÓN:**")
@@ -376,7 +426,7 @@ def ver_siguiente_actividad_alumno(correo: str) -> None:
         print(f"   • 3️⃣ **Consulta material**: Usa los RAPs como guía")
         print(f"   • 4️⃣ **Avanza progresivamente**: Paso a paso")
     
-    # RESUMEN FINAL MOTIVACIONAL
+    # Resumen final motivacional
     print(f"\n" + "🌟 RESUMEN FINAL" + " 🌟")
     print("-" * 30)
     
@@ -396,17 +446,21 @@ def ver_siguiente_actividad_alumno(correo: str) -> None:
         else:
             print("🏆 **¡Impresionante! Estás cerca de dominar todo el material**")
 
+
 def ver_roadmap_alumno(correo: str) -> None:
-    from Neo4J.neo_queries import fetch_actividades_lentas_alumno
-    from typing import Dict, List, Any, Optional
+    """
+    Muestra el roadmap completo de aprendizaje para un alumno.
     
+    Args:
+        correo: Correo electrónico del alumno
+    """
     progreso = fetch_progreso_alumno(correo)
     if not progreso:
         print("⚠️ No hay progreso registrado para este alumno")
         return
     
-    # Obtener actividades lentas
-    actividades_lentas: List[Dict[str, Any]] = []
+    # Obtener actividades lentas para análisis de eficiencia
+    actividades_lentas = []
     
     try:
         print("⏳ Analizando eficiencia en tiempo...")
@@ -421,17 +475,17 @@ def ver_roadmap_alumno(correo: str) -> None:
         print(f"⚠️ No se pudieron analizar actividades lentas: {e}")
         actividades_lentas = []
     
-    def fetch_next_activity() -> Optional[Dict[str, Any]]:
+    def fetch_next_activity():
         return fetch_siguiente_actividad(correo)
     
-    # Pasar actividades_lentas al generador de roadmap
+    # Generar roadmap con actividades lentas incluidas
     roadmap = generar_roadmap_from_progress_and_fetcher(progreso, fetch_next_activity, actividades_lentas)
     
     if not roadmap:
         print("🎉 ¡Felicidades! Has completado todas las actividades disponibles")
         return
     
-    # Mostrar estadísticas
+    # Mostrar estadísticas del roadmap
     estrategias_count: Dict[str, int] = {}
     for r in roadmap:
         estrategia: str = r["estrategia"]
@@ -462,7 +516,7 @@ def ver_roadmap_alumno(correo: str) -> None:
         act: Dict[str, Any] = r['actividad']
         estrategia: str = r['estrategia']
         
-        # Configuración según estrategia
+        # Configuración visual según estrategia
         estrategia_config = {
             "nuevas": ("🚀", "NUEVO DESAFÍO", "🌟 Comienza un nuevo tema"),
             "refuerzo": ("🔄", "TERMINAR PENDIENTE", "📝 Completa esta actividad"), 
@@ -470,16 +524,14 @@ def ver_roadmap_alumno(correo: str) -> None:
             "refuerzo_tiempo": ("⏰", "MEJORAR EFICIENCIA", "⚡ Optimiza tu tiempo")
         }.get(estrategia, ("📌", estrategia.upper(), ""))
         
-        emoji: str = estrategia_config[0]
-        texto_estrategia: str = estrategia_config[1]
-        descripcion: str = estrategia_config[2]
+        emoji, texto_estrategia, descripcion = estrategia_config
         
         print(f"\n{i}. {emoji} {texto_estrategia}")
         print(f"   📚 {act.get('tipo', 'Actividad')}")
         print(f"   📖 {act.get('nombre', 'Sin nombre')}")
         print(f"   💡 {descripcion}")
         
-        # Información específica por estrategia
+        # Información específica para actividades de mejora de tiempo
         if estrategia == "refuerzo_tiempo" and act.get('diferencia_porcentual'):
             print(f"   ⏱️  Eficiencia: +{act['diferencia_porcentual']:.1f}% vs promedio")
             if act.get('tiempo_promedio_alumno') and act.get('tiempo_promedio_global'):
@@ -487,17 +539,21 @@ def ver_roadmap_alumno(correo: str) -> None:
                 tiempo_promedio = formatear_tiempo_analisis(act['tiempo_promedio_global'])
                 print(f"   📊 Tiempos: Tú: {tiempo_alumno} | Promedio: {tiempo_promedio}")
         
-        # Mostrar motivo específico
+        # Mostrar motivo específico si está disponible
         if r.get('motivo'):
             print(f"   🎯 {r['motivo']}")
         
-        # Línea separadora cada 3 actividades
+        # Línea separadora cada 3 actividades para mejor legibilidad
         if i % 3 == 0 and i < len(roadmap):
             print("   " + "─" * 50)
 
+
 def ver_analisis_avanzado_alumno(correo: str) -> None:
     """
-    Muestra análisis avanzado de rendimiento - DISPONIBLE PARA TODOS LOS ALUMNOS
+    Muestra análisis avanzado de rendimiento comparado con el grupo.
+    
+    Args:
+        correo: Correo electrónico del alumno
     """
     print("\n" + "📊 ANÁLISIS AVANZADO DE RENDIMIENTO")
     print("=" * 60)
@@ -526,24 +582,25 @@ def ver_analisis_avanzado_alumno(correo: str) -> None:
         progreso_porcentaje = ((completados + perfectos) / total_actividades) * 100
         print(f"• 📈 Progreso general: {progreso_porcentaje:.1f}%")
     
-    # Inicializar análisis
+    # Realizar análisis según el estado del alumno
     analisis: Dict[str, Any] = {}
-    
-    # Verificar si tiene todo perfecto para análisis completo
     tiene_todo_perfecto: bool = fetch_verificar_alumno_perfecto(correo)
     
     if tiene_todo_perfecto:
         print(f"\n🎉 ¡FELICITACIONES! Tienes todas las actividades en estado 'Perfecto'")
         print("📊 Procediendo con análisis comparativo completo...")
-        analisis = analizar_rendimiento_comparativo(correo)
+        analisis = analizar_rendimiento_comparativo(
+            correo,
+            fetch_verificar_alumno_perfecto,
+            fetch_estadisticas_globales,
+            fetch_estadisticas_alumno
+        )
     else:
         print(f"\nℹ️  Análisis básico disponible (análisis completo requiere todas las actividades en 'Perfecto')")
-        # Llamar a la función de análisis pero manejar el caso de no-todo-perfecto
-        
+        # Análisis básico con información disponible
         stats_globales = fetch_estadisticas_globales()
         stats_alumno = fetch_estadisticas_alumno(correo)
         
-        # Crear un análisis básico con la información disponible
         analisis = {
             "resumen_general": {
                 "total_actividades": stats_alumno["resumen"]["total_actividades"],
@@ -601,7 +658,7 @@ def ver_analisis_avanzado_alumno(correo: str) -> None:
                 elif comparativa["diferencia_porcentual"] < 30:
                     comparativa["eficiencia"] = "LENTO"
                 else:
-                    comparativa["eficiencia"] = "MUY_LENTO"
+                                        comparativa["eficiencia"] = "MUY_LENTO"
             
             analisis["comparativas"].append(comparativa)
         
@@ -609,7 +666,7 @@ def ver_analisis_avanzado_alumno(correo: str) -> None:
         if analisis["comparativas"]:
             _generar_insights_basicos(analisis, tiene_todo_perfecto)
     
-    # Mostrar resultados del análisis (sin verificación de None)
+    # Mostrar resultados del análisis
     if "error" in analisis:
         print(f"\nℹ️  {analisis['error']}")
         return
@@ -619,7 +676,7 @@ def ver_analisis_avanzado_alumno(correo: str) -> None:
         print("💡 Las actividades necesitan tener registro de duración")
         return
     
-    # --- MOSTRAR RESUMEN EJECUTIVO PRIMERO ---
+    # Mostrar resumen ejecutivo primero
     _mostrar_resumen_analisis(analisis)
     
     # Resumen general
@@ -631,7 +688,7 @@ def ver_analisis_avanzado_alumno(correo: str) -> None:
     if tiempo_total > 0:
         print(f"• ⏱️  Tiempo total invertido: {formatear_tiempo_analisis(tiempo_total)}")
     
-    # Mostrar insights
+    # Mostrar insights generados
     insights: Dict[str, List[str]] = analisis["insights"]
     
     if insights.get("fortalezas"):
@@ -652,7 +709,7 @@ def ver_analisis_avanzado_alumno(correo: str) -> None:
         for recomendacion in insights["recomendaciones"]:
             print(f"  {recomendacion}")
     
-    # Análisis detallado (opcional)
+    # Opción para ver análisis detallado
     if analisis.get("comparativas"):
         print(f"\n📋 ¿Ver análisis detallado por actividad? (s/n): ", end="")
         if input().strip().lower() == 's':
@@ -661,12 +718,16 @@ def ver_analisis_avanzado_alumno(correo: str) -> None:
 
 def _generar_insights_basicos(analisis: Dict[str, Any], tiene_todo_perfecto: bool) -> None:
     """
-    Genera insights básicos para alumnos que no tienen todo perfecto
+    Genera insights básicos para alumnos que no tienen todas las actividades en perfecto.
+    
+    Args:
+        analisis: Diccionario con datos de análisis
+        tiene_todo_perfecto: Indica si el alumno tiene todo perfecto
     """
     comparativas: List[Dict[str, Any]] = analisis.get("comparativas", [])
     insights: Dict[str, List[str]] = analisis["insights"]
     
-    # Identificar actividades eficientes
+    # Identificar actividades eficientes y lentas
     actividades_eficientes = [c for c in comparativas if c.get("eficiencia") in ["MUY_EFICIENTE", "EFICIENTE"]]
     actividades_lentas = [c for c in comparativas if c.get("eficiencia") in ["LENTO", "MUY_LENTO"]]
     
@@ -699,20 +760,21 @@ def _generar_insights_basicos(analisis: Dict[str, Any], tiene_todo_perfecto: boo
         
         insights["recomendaciones"].append("🏆 Completa todas las actividades para obtener un análisis completo")
 
+
 def ver_estadisticas_sistema() -> None:
-    """
-    Muestra estadísticas generales del sistema
-    """
+    """Muestra estadísticas generales del sistema."""
     print("\n" + "📊 ESTADÍSTICAS DEL SISTEMA")
     print("=" * 50)
     mostrar_estadisticas_rapidas()
     input("\n📝 Presione Enter para continuar...")
 
+
 # ============================================================
-# Bucle principal MEJORADO
+# Bucle Principal del Sistema
 # ============================================================
 
 def main() -> None:
+    """Función principal que ejecuta el bucle de la aplicación."""
     while True:
         limpiar_consola()
         opcion = mostrar_menu_principal()
@@ -731,9 +793,8 @@ def main() -> None:
                 input("\nPresione Enter para continuar...")
                 continue
 
-            # Extract just the names for display
+            # Preparar datos para selección
             alumnos_nombres = [alumno["nombre"] for alumno in alumnos_data]
-            # Store the mapping from name to email for later queries
             alumno_map = {alumno["nombre"]: alumno["correo"] for alumno in alumnos_data}
 
             while True:
@@ -753,7 +814,7 @@ def main() -> None:
                     continue
 
                 if seleccion == 0:
-                    break  # volver al menú principal
+                    break
                 elif 1 <= seleccion <= len(alumnos_nombres):
                     alumno_nombre = alumnos_nombres[seleccion - 1]
                     alumno_correo = alumno_map[alumno_nombre]
@@ -773,7 +834,7 @@ def main() -> None:
                         elif opcion_alumno == "4":
                             ver_analisis_avanzado_alumno(alumno_correo)
                         elif opcion_alumno == "0":
-                            break  # volver al listado de alumnos
+                            break
                         else:
                             print("❌ Opción no válida")
 

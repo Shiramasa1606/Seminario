@@ -1,3 +1,30 @@
+"""
+Módulo de Relacionamiento de Alumnos - Gestión de Progreso y Actividades en Neo4J
+
+Este módulo se encarga de establecer las relaciones entre alumnos y actividades educativas
+(cuestionarios y ayudantías) basándose en datos de progreso provenientes de archivos CSV.
+Incluye el procesamiento de estados, calificaciones, duraciones y fechas para crear
+un historial completo del progreso estudiantil.
+
+Funciones principales:
+    - procesar_unidades: Proceso principal de relacionamiento masivo
+    - procesar_csv: Procesamiento individual de archivos CSV
+    - crear_relacion: Función genérica para crear relaciones en Neo4J
+    - Funciones de parseo: Conversión de formatos españoles a estándares
+
+Características:
+    - Procesamiento de fechas en formato español
+    - Conversión de duraciones a segundos
+    - Determinación automática de estados (Intento/Completado/Perfecto)
+    - Validación exhaustiva de datos
+    - Manejo robusto de errores por alumno
+
+Estructura de datos manejada:
+    - Estados: Intento, Completado, Perfecto
+    - Actividades: Cuestionario, Ayudantia
+    - Métricas: Duración, Calificación, Fechas
+"""
+
 from pathlib import Path
 from typing import Literal, Optional, Any
 import re
@@ -6,19 +33,25 @@ import pandas as pd
 from neo4j import Driver, ManagedTransaction
 import logging
 
-# Setup logging
+# Configuración de logging para seguimiento de operaciones
 logger = logging.getLogger(__name__)
 
 # ----------------------------
-# Tipos de relaciones
+# Tipos de relaciones y validaciones
 # ----------------------------
+
+# Tipo literal para relaciones válidas
 TipoRelacion = Literal["Intento", "Completado", "Perfecto"]
+
+# Conjuntos de validación para relaciones y nodos
 VALID_RELACIONES: set[str] = {"Intento", "Completado", "Perfecto"}
 VALID_NODOS: set[str] = {"Cuestionario", "Ayudantia"}
 
 # ----------------------------
 # Helpers: parseo de campos del CSV
 # ----------------------------
+
+# Mapeo de meses en español a números
 SPANISH_MONTHS = {
     "enero": 1, "febrero": 2, "marzo": 3, "abril": 4, "mayo": 5, "junio": 6,
     "julio": 7, "agosto": 8, "septiembre": 9, "setiembre": 9, "octubre": 10,
@@ -27,13 +60,29 @@ SPANISH_MONTHS = {
 
 def parse_fecha_a_iso(fecha_str: str) -> Optional[str]:
     """
-    Convierte una fecha en español a formato ISO.
+    Convierte una fecha en formato español a formato ISO 8601.
+    
+    Soporta formatos como "15 de enero de 2024" o "15 de enero de 2024 14:30"
+    y también formatos ISO directos. Maneja normalización de acentos y variantes.
     
     Args:
-        fecha_str: String con la fecha en formato español
+        fecha_str: String con la fecha en formato español o ISO
         
     Returns:
-        String en formato ISO o None si no se puede parsear
+        Optional[str]: String en formato ISO 8601 o None si no se puede parsear
+        
+    Example:
+        >>> parse_fecha_a_iso("15 de enero de 2024")
+        '2024-01-15T00:00:00'
+        >>> parse_fecha_a_iso("20 de marzo de 2024 14:30")
+        '2024-03-20T14:30:00'
+        >>> parse_fecha_a_iso("2024-01-15T10:30:00")
+        '2024-01-15T10:30:00'
+        
+    Note:
+        - Maneja meses con y sin acentos
+        - Agrega segundos si faltan en el tiempo
+        - Retorna None para valores vacíos o no parseables
     """
     if not fecha_str or str(fecha_str).strip() in ("", "-", "–"):
         return None
@@ -46,6 +95,7 @@ def parse_fecha_a_iso(fecha_str: str) -> Optional[str]:
         )
         if m:
             day, month_name, year, time_part = m.groups()
+            # Normalizar acentos en nombres de meses
             month_name = month_name.replace("á", "a").replace("é", "e").replace(
                 "í", "i").replace("ó", "o").replace("ú", "u"
             )
@@ -66,6 +116,7 @@ def parse_fecha_a_iso(fecha_str: str) -> Optional[str]:
             except Exception:
                 return None
         else:
+            # Intentar parsear como formato ISO directo
             try:
                 dt = datetime.fromisoformat(s)
                 return dt.strftime("%Y-%m-%dT%H:%M:%S")
@@ -77,13 +128,29 @@ def parse_fecha_a_iso(fecha_str: str) -> Optional[str]:
 
 def parse_duracion_a_segundos(duracion_str: str) -> Optional[int]:
     """
-    Convierte una duración en texto a segundos.
+    Convierte una duración en texto español a segundos.
+    
+    Extrae horas, minutos y segundos de strings como "2 horas 30 minutos"
+    o "1 hora 15 minutos 30 segundos" y calcula el total en segundos.
     
     Args:
-        duracion_str: String con la duración (ej: "2 horas 30 minutos")
+        duracion_str: String con la duración en formato descriptivo
         
     Returns:
-        Duración en segundos o None si no se puede parsear
+        Optional[int]: Duración total en segundos o None si no se puede parsear
+        
+    Example:
+        >>> parse_duracion_a_segundos("2 horas 30 minutos")
+        9000
+        >>> parse_duracion_a_segundos("1 hora 15 minutos 30 segundos")
+        4530
+        >>> parse_duracion_a_segundos("45 minutos")
+        2700
+        
+    Note:
+        - Case-insensitive
+        - Ignora elementos no numéricos
+        - Retorna None para valores vacíos o sin componentes temporales
     """
     if not duracion_str or str(duracion_str).strip() in ("", "-", "–"):
         return None
@@ -105,19 +172,36 @@ def parse_duracion_a_segundos(duracion_str: str) -> Optional[int]:
 
 def parse_calificacion_a_float(cal_str: str) -> Optional[float]:
     """
-    Convierte una calificación en texto a float.
+    Convierte una calificación en texto a valor float.
+    
+    Maneja formatos con comas decimales, puntos como separadores de miles,
+    y limpia comillas u otros caracteres no numéricos.
     
     Args:
-        cal_str: String con la calificación
+        cal_str: String con la calificación numérica
         
     Returns:
-        Calificación como float o None si no se puede parsear
+        Optional[float]: Calificación como float o None si no se puede parsear
+        
+    Example:
+        >>> parse_calificacion_a_float("95,5")
+        95.5
+        >>> parse_calificacion_a_float("100")
+        100.0
+        >>> parse_calificacion_a_float("'85.5'")
+        85.5
+        
+    Note:
+        - Asume que las comas son decimales y los puntos son separadores de miles
+        - Remueve comillas y espacios
+        - Retorna None para valores vacíos o no numéricos
     """
     if not cal_str or str(cal_str).strip() in ("", "-", "–"):
         return None
     
     try:
         s = str(cal_str).strip().replace('"', "").replace("'", "")
+        # Asumir que las comas son decimales y los puntos son separadores de miles
         s = s.replace(".", "").replace(",", ".")
         return float(s)
     except Exception as e:
@@ -127,6 +211,7 @@ def parse_calificacion_a_float(cal_str: str) -> Optional[float]:
 # ----------------------------
 # Función genérica para relaciones
 # ----------------------------
+
 def crear_relacion(
     tx: ManagedTransaction,
     alumno_correo: str,
@@ -140,23 +225,39 @@ def crear_relacion(
     estado_raw: Optional[str] = None,
 ) -> None:
     """
-    Crea una relación entre un alumno y un nodo (Cuestionario/Ayudantia).
+    Crea una relación entre un alumno y un nodo (Cuestionario/Ayudantia) en Neo4J.
+    
+    Función genérica que maneja la creación de relaciones con todos los atributos
+    posibles: fechas, duración, calificación y estado. Usa MERGE para evitar
+    duplicados y actualiza propiedades existentes.
     
     Args:
-        tx: Transacción de Neo4j
-        alumno_correo: Correo del alumno
-        nodo_nombre: Nombre del nodo destino
-        tipo_relacion: Tipo de relación a crear
-        nodo_label: Etiqueta del nodo destino
-        start_iso: Fecha de inicio en ISO
-        end_iso: Fecha de fin en ISO
-        duration_seconds: Duración en segundos
-        score: Puntuación
-        estado_raw: Estado original
+        tx: Transacción activa de Neo4J
+        alumno_correo: Correo electrónico único del alumno
+        nodo_nombre: Nombre del nodo destino (Cuestionario o Ayudantia)
+        tipo_relacion: Tipo de relación a crear (Intento/Completado/Perfecto)
+        nodo_label: Etiqueta del nodo destino ("Cuestionario" o "Ayudantia")
+        start_iso: Fecha de inicio en formato ISO 8601
+        end_iso: Fecha de finalización en formato ISO 8601
+        duration_seconds: Duración total en segundos
+        score: Calificación numérica (0-100)
+        estado_raw: Estado original del sistema fuente
         
     Raises:
-        ValueError: Si el tipo de relación o etiqueta son inválidos
-        Exception: Si hay error en la base de datos
+        ValueError: Si el tipo de relación o etiqueta de nodo son inválidos
+        Exception: Si hay error en la operación de base de datos
+        
+    Example:
+        >>> crear_relacion(tx, "alumno@email.com", "Evaluacion_1", "Completado", 
+        ...                "Cuestionario", "2024-01-15T10:00:00", "2024-01-15T11:30:00", 
+        ...                5400, 85.5, "Finalizado")
+        ✅ Relación Completado insertada: alumno@email.com -> Evaluacion_1
+        
+    Note:
+        - Usa MERGE para operación idempotente
+        - Actualiza solo las propiedades no nulas
+        - Valida tipos de relación y etiquetas
+        - Maneja fechas como objetos datetime de Neo4J
     """
     if tipo_relacion not in VALID_RELACIONES:
         raise ValueError(f"Tipo de relación inválido: {tipo_relacion}")
@@ -164,7 +265,7 @@ def crear_relacion(
         raise ValueError(f"Etiqueta de nodo inválida: {nodo_label}")
 
     try:
-        # Construir query de manera segura
+        # Construir query de manera segura con FOREACH para propiedades opcionales
         query: str = (
             f"MATCH (al:Alumno {{correo:$correo}}) "
             f"MATCH (n:{nodo_label} {{nombre:$nombre}}) "
@@ -199,8 +300,9 @@ def crear_relacion(
         raise
 
 # ----------------------------
-# Funciones específicas
+# Funciones específicas por tipo de actividad
 # ----------------------------
+
 def relacionar_alumno_cuestionario(
     tx: ManagedTransaction, 
     alumno_correo: str, 
@@ -213,7 +315,25 @@ def relacionar_alumno_cuestionario(
     estado_raw: Optional[str] = None
 ) -> None:
     """
-    Crea relación entre alumno y cuestionario.
+    Crea relación específica entre alumno y cuestionario.
+    
+    Wrapper especializado de crear_relacion para cuestionarios.
+    
+    Args:
+        tx: Transacción activa de Neo4J
+        alumno_correo: Correo electrónico del alumno
+        nombre: Nombre del cuestionario
+        tipo_relacion: Tipo de relación a crear
+        start_iso: Fecha de inicio en ISO
+        end_iso: Fecha de fin en ISO
+        duration_seconds: Duración en segundos
+        score: Calificación numérica
+        estado_raw: Estado original
+        
+    Example:
+        >>> relacionar_alumno_cuestionario(tx, "alumno@email.com", "Quiz_1", 
+        ...                               "Completado", "2024-01-15T10:00:00", 
+        ...                               "2024-01-15T11:00:00", 3600, 90.0, "Finalizado")
     """
     crear_relacion(tx, alumno_correo, nombre, tipo_relacion, nodo_label="Cuestionario",
                    start_iso=start_iso, end_iso=end_iso, duration_seconds=duration_seconds,
@@ -231,24 +351,58 @@ def relacionar_alumno_ayudantia(
     estado_raw: Optional[str] = None
 ) -> None:
     """
-    Crea relación entre alumno y ayudantía.
+    Crea relación específica entre alumno y ayudantía.
+    
+    Wrapper especializado de crear_relacion para ayudantías.
+    
+    Args:
+        tx: Transacción activa de Neo4J
+        alumno_correo: Correo electrónico del alumno
+        nombre: Nombre de la ayudantía
+        tipo_relacion: Tipo de relación a crear
+        start_iso: Fecha de inicio en ISO
+        end_iso: Fecha de fin en ISO
+        duration_seconds: Duración en segundos
+        score: Calificación numérica
+        estado_raw: Estado original
+        
+    Example:
+        >>> relacionar_alumno_ayudantia(tx, "alumno@email.com", "Sesion_1", 
+        ...                            "Intento", "2024-01-15T14:00:00", 
+        ...                            "2024-01-15T15:30:00", 5400, None, "En progreso")
     """
     crear_relacion(tx, alumno_correo, nombre, tipo_relacion, nodo_label="Ayudantia",
                    start_iso=start_iso, end_iso=end_iso, duration_seconds=duration_seconds,
                    score=score, estado_raw=estado_raw)
 
 # ----------------------------
-# Listar alumnos
+# Listar alumnos existentes
 # ----------------------------
+
 def obtener_lista_alumnos(driver: Driver) -> list[str]:
     """
     Obtiene la lista de correos de todos los alumnos en la base de datos.
     
+    Consulta Neo4J para obtener todos los correos electrónicos de alumnos
+    registrados, normalizados a minúsculas para consistencia en las búsquedas.
+    
     Args:
-        driver: Driver de Neo4j
+        driver: Driver de conexión a Neo4J
         
     Returns:
-        Lista de correos electrónicos de alumnos
+        list[str]: Lista de correos electrónicos de alumnos existentes
+        
+    Example:
+        >>> alumnos = obtener_lista_alumnos(driver)
+        >>> print(f"Total alumnos: {len(alumnos)}")
+        Total alumnos: 150
+        >>> print(alumnos[:3])
+        ['alumno1@email.com', 'alumno2@email.com', 'alumno3@email.com']
+        
+    Note:
+        - Retorna lista vacía en caso de error
+        - Normaliza correos a minúsculas
+        - Filtra valores nulos o vacíos
     """
     try:
         with driver.session() as session:
@@ -261,20 +415,36 @@ def obtener_lista_alumnos(driver: Driver) -> list[str]:
         return []
 
 # ----------------------------
-# Procesar CSV
+# Procesar CSV individual
 # ----------------------------
+
 def procesar_csv(driver: Driver, recurso_path: Path, tipo_recurso: Literal["Cuestionario", "Ayudantia"]) -> None:
     """
-    Procesa un archivo CSV y crea las relaciones correspondientes.
+    Procesa un archivo CSV individual y crea las relaciones alumno-actividad.
+    
+    Lee un archivo CSV de calificaciones/progreso, parsea los datos, y crea
+    las relaciones correspondientes en Neo4J para todos los alumnos encontrados
+    tanto en la base de datos como en el CSV.
     
     Args:
-        driver: Driver de Neo4j
-        recurso_path: Path al archivo CSV
-        tipo_recurso: Tipo de recurso (Cuestionario o Ayudantia)
+        driver: Driver de conexión a Neo4J
+        recurso_path: Path al archivo CSV a procesar
+        tipo_recurso: Tipo de recurso ("Cuestionario" o "Ayudantia")
         
     Raises:
-        ValueError: Si el CSV no tiene la estructura esperada
-        FileNotFoundError: Si el archivo no existe
+        FileNotFoundError: Si el archivo CSV no existe
+        ValueError: Si el CSV no tiene la estructura esperada (falta columna de correo)
+        
+    Example:
+        >>> procesar_csv(driver, Path("/ruta/cuestionario_1-calificaciones.csv"), "Cuestionario")
+        📄 Procesando Cuestionario: cuestionario_1-calificaciones.csv
+        ✅ Cuestionario cuestionario_1: 45 alumnos procesados, 2 errores
+        
+    Note:
+        - Determina automáticamente el tipo de relación basado en estado y calificación
+        - Solo procesa alumnos que existan en la base de datos
+        - Continúa el procesamiento despite errores individuales por alumno
+        - Limpia automáticamente el nombre del recurso removiendo sufijos
     """
     if not recurso_path.exists():
         raise FileNotFoundError(f"Archivo CSV no encontrado: {recurso_path}")
@@ -291,25 +461,26 @@ def procesar_csv(driver: Driver, recurso_path: Path, tipo_recurso: Literal["Cues
         logger.warning(f"⚠️ CSV vacío: {recurso_path}")
         return
 
-    # Buscar columnas relevantes
+    # Buscar columnas relevantes por patrones en los nombres
     col_correo = next((c for c in df.columns if "correo" in c.lower()), None)
     if col_correo is None:
         error_msg = f"No se encontró la columna de correo en {recurso_path}"
         logger.error(f"❌ {error_msg}")
         raise ValueError(error_msg)
 
+    # Buscar otras columnas por patrones
     col_estado = next((c for c in df.columns if "estado" in c.lower()), None)
     col_comenzado = next((c for c in df.columns if "comenz" in c.lower()), None)
     col_finalizado = next((c for c in df.columns if "finaliz" in c.lower()), None)
     col_duracion = next((c for c in df.columns if "dur" in c.lower()), None)
     col_calificacion = next((c for c in df.columns if "calific" in c.lower()), None)
 
-    # Limpiar y preparar datos
+    # Limpiar y preparar datos del CSV
     df[col_correo] = df[col_correo].astype(str)
     csv_correos = {str(row[col_correo]).strip().lower() for _, row in df.iterrows() if str(row[col_correo]).strip()}
     alumnos_bd = obtener_lista_alumnos(driver)
 
-    # Limpiar nombre del recurso
+    # Limpiar nombre del recurso (remover sufijos como "-calificaciones")
     recurso_nombre = recurso_path.stem
     if recurso_nombre.lower().endswith("-calificaciones"):
         recurso_nombre = recurso_nombre[: -len("-calificaciones")]
@@ -331,23 +502,24 @@ def procesar_csv(driver: Driver, recurso_path: Path, tipo_recurso: Literal["Cues
 
             serie = alumno_data.iloc[0]
 
-            # Parsear datos
+            # Parsear todos los campos disponibles
             estado = str(serie[col_estado]).strip() if col_estado and pd.notna(serie[col_estado]) else ""
             start_iso = parse_fecha_a_iso(str(serie[col_comenzado]).strip() if col_comenzado and pd.notna(serie[col_comenzado]) else "")
             end_iso = parse_fecha_a_iso(str(serie[col_finalizado]).strip() if col_finalizado and pd.notna(serie[col_finalizado]) else "")
             duration_seconds = parse_duracion_a_segundos(str(serie[col_duracion]).strip() if col_duracion and pd.notna(serie[col_duracion]) else "")
             score = parse_calificacion_a_float(str(serie[col_calificacion]).strip() if col_calificacion and pd.notna(serie[col_calificacion]) else "")
 
-            # Determinar tipo de relación
+            # Determinar tipo de relación basado en estado y calificación
             tipo_relacion: TipoRelacion = "Intento"
             if estado.lower() == "finalizado":
                 tipo_relacion = "Completado"
                 if score is not None and abs(score - 100.0) < 1e-6:
                     tipo_relacion = "Perfecto"
 
-            # Crear relación
+            # Seleccionar función específica según tipo de recurso
             funcion_relacion = relacionar_alumno_cuestionario if tipo_recurso == "Cuestionario" else relacionar_alumno_ayudantia
             
+            # Ejecutar la creación de relación
             with driver.session() as session:
                 session.execute_write(funcion_relacion, correo, recurso_nombre, tipo_relacion,
                                       start_iso, end_iso, duration_seconds, score, estado)
@@ -362,18 +534,39 @@ def procesar_csv(driver: Driver, recurso_path: Path, tipo_recurso: Literal["Cues
     logger.info(f"✅ {tipo_recurso} {recurso_nombre}: {alumnos_procesados} alumnos procesados, {errores} errores")
 
 # ----------------------------
-# Procesar todas las unidades
+# Procesar todas las unidades (función principal)
 # ----------------------------
+
 def procesar_unidades(driver: Driver, base_path: Path) -> None:
     """
-    Procesa todas las unidades, cuestionarios y ayudantías.
+    Procesa recursivamente todas las unidades, cuestionarios y ayudantías.
+    
+    Función principal que orquesta el procesamiento completo de todas las
+    actividades educativas. Recorre la estructura de directorios, encuentra
+    archivos CSV de calificaciones y crea las relaciones correspondientes
+    en la base de datos Neo4J.
     
     Args:
-        driver: Driver de Neo4j
-        base_path: Ruta base donde buscar las unidades
+        driver: Driver de conexión a Neo4J
+        base_path: Ruta base donde buscar las unidades y actividades
         
     Raises:
-        FileNotFoundError: Si la ruta base no es válida
+        FileNotFoundError: Si la ruta base no existe o no es un directorio
+        
+    Example:
+        >>> procesar_unidades(driver, Path("/ruta/materiales"))
+        🔍 Iniciando procesamiento de unidades en: /ruta/materiales
+        📁 Procesando unidad: Unidad_01
+        ✅ Cuestionario quiz_1: 45 alumnos procesados, 2 errores
+        ✅ Ayudantía sesion_1: 40 alumnos procesados, 1 error
+        ...
+        ✅ Procesamiento completado: 5 unidades, 15 cuestionarios, 8 ayudantías
+        
+    Note:
+        - Excluye automáticamente la carpeta 'Alumnos'
+        - Procesa solo archivos CSV
+        - Continúa el procesamiento despite errores en archivos individuales
+        - Logging detallado de progreso y métricas finales
     """
     if not base_path.exists():
         raise FileNotFoundError(f"La ruta base no existe: {base_path}")
@@ -394,7 +587,7 @@ def procesar_unidades(driver: Driver, base_path: Path) -> None:
         logger.info(f"📁 Procesando unidad: {unidad_dir.name}")
         unidades_procesadas += 1
 
-        # Procesar cuestionarios
+        # Procesar cuestionarios de la unidad
         cuestionarios_path = unidad_dir / "Cuestionarios"
         if cuestionarios_path.exists() and cuestionarios_path.is_dir():
             for archivo in cuestionarios_path.iterdir():
@@ -406,7 +599,7 @@ def procesar_unidades(driver: Driver, base_path: Path) -> None:
                         logger.error(f"❌ Error procesando cuestionario {archivo}: {e}")
                         continue
 
-        # Procesar ayudantías
+        # Procesar ayudantías de la unidad
         ayudantias_path = unidad_dir / "Ayudantías"
         if ayudantias_path.exists() and ayudantias_path.is_dir():
             for archivo in ayudantias_path.iterdir():

@@ -1,3 +1,48 @@
-neo4j>=5.7.0
-python-dotenv>=1.0.0
-pandas>=1.5.0
+# =============================================
+# Sistema de Recomendación de Aprendizaje - Neo4J
+# Dependencias basadas en análisis completo de imports
+# =============================================
+
+# 🔷 DEPENDENCIAS PRINCIPALES 🔷
+
+# Base de datos graph - REQUERIDO
+neo4j==5.20.0
+
+# Procesamiento de datos CSV - REQUERIDO  
+pandas==2.2.0
+
+# Variables de entorno - REQUERIDO
+python-dotenv==1.0.0
+
+# Tipado avanzado - REQUERIDO
+typing-extensions==4.9.0
+
+
+# =============================================
+# DEPENDENCIAS DE DESARROLLO Y CALIDAD
+# =============================================
+
+# Testing
+pytest==7.4.3
+pytest-cov==4.1.0
+
+# Formateo de código
+black==23.9.1
+isort==5.13.2
+
+# Análisis estático
+flake8==6.1.0
+mypy==1.6.1
+
+# Types para pandas (mejor type checking)
+pandas-stubs==2.0.3.230813
+
+
+# =============================================
+# VERSIONES COMPATIBLES
+# =============================================
+
+# Python 3.8+ requerido para:
+# - typing.Literal (3.8+)
+# - pathlib.Path mejorado (3.8+)
+# - Mejor soporte para type hints

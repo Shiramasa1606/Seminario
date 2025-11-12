@@ -1,6 +1,33 @@
-# Neo4J/neo_queries.py
+"""
+Módulo de consultas Neo4J - Núcleo del Sistema
+
+Interface principal para operaciones sobre el grafo de conocimientos de Neo4J.
+Coordina todas las interacciones con la base de datos y implementa la lógica
+de recomendaciones y análisis del sistema educativo.
+
+Funciones principales:
+    - Gestión de alumnos y progreso
+    - Sistema de recomendaciones inteligentes
+    - Generación de roadmaps de aprendizaje
+    - Análisis estadísticos y métricas
+    - Búsqueda de actividades siguientes
+
+Características:
+    - Excluye actividades RAP en todas las consultas
+    - Implementa estrategias de aprendizaje adaptativo
+    - Proporciona analytics detallados
+    - Gestiona estados: Intento, Completado, Perfecto
+
+Estrategias de recomendación:
+    - Refuerzo: Para actividades con intentos fallidos
+    - Mejora: Para actividades completadas pero no perfectas
+    - Avance: Para actividades perfectas, sugiere nuevas
+"""
+
 from typing import List, Dict, Any, Optional, Callable, cast
+
 from neo4j import Driver
+
 from Neo4J.conn import obtener_driver
 
 # Define type aliases for better clarity
@@ -9,14 +36,20 @@ ProgressItem = Dict[str, Any]
 RecommendationResult = Optional[Dict[str, Any]]
 FetchNextFunction = Callable[[], Optional[ActivityDict]]
 
+
 # ============================================================================
 # FUNCIONES DE CONSULTA BÁSICAS
 # ============================================================================
 
 def fetch_alumnos() -> List[Dict[str, str]]:
-    """Obtiene lista de todos los alumnos"""
+    """
+    Obtiene lista completa de todos los alumnos registrados.
+    
+    Returns:
+        List[Dict[str, str]]: Lista de alumnos con correo y nombre
+    """
     driver: Driver = obtener_driver()
-    cypher: str = """
+    cypher = """
     MATCH (a:Alumno)
     RETURN a.correo AS correo, a.nombre AS nombre
     ORDER BY a.nombre
@@ -33,10 +66,19 @@ def fetch_alumnos() -> List[Dict[str, str]]:
     finally:
         driver.close()
 
+
 def fetch_progreso_alumno(correo: str) -> List[Dict[str, Any]]:
-    """Obtiene el progreso completo de un alumno EXCLUYENDO RAPs"""
+    """
+    Obtiene el progreso completo de un alumno excluyendo actividades RAP.
+    
+    Args:
+        correo: Correo del alumno a consultar
+        
+    Returns:
+        List[Dict[str, Any]]: Lista de actividades con estado, duración y puntaje
+    """
     driver: Driver = obtener_driver()
-    cypher: str = """
+    cypher = """
     MATCH (a:Alumno {correo: $correo})-[r]->(act)
     WHERE type(r) IN ["Intento","Completado","Perfecto"]
     AND NOT 'RAP' IN labels(act)  // EXCLUIR RAPs
@@ -68,14 +110,25 @@ def fetch_progreso_alumno(correo: str) -> List[Dict[str, Any]]:
     finally:
         driver.close()
 
+
 # ============================================================================
 # FUNCIONES DE RECOMENDACIÓN Y ROADMAP (EXCLUYENDO RAPs)
 # ============================================================================
 
 def fetch_recomendacion_siguiente(progreso: List[ProgressItem]) -> RecommendationResult:
     """
-    Recibe la lista de progreso y devuelve recomendación de siguiente actividad
-    EXCLUYENDO RAPs completamente
+    Analiza el progreso y recomienda siguiente actividad con estrategia específica.
+    
+    Estrategias:
+        - Refuerzo: Si hay actividades con estado "Intento"
+        - Mejora: Si hay actividades con estado "Completado" 
+        - Avance: Si hay actividades con estado "Perfecto"
+    
+    Args:
+        progreso: Lista del progreso actual del alumno
+        
+    Returns:
+        RecommendationResult: Recomendación con estrategia y actividad, o None
     """
     if not progreso:
         return None
@@ -95,13 +148,23 @@ def fetch_recomendacion_siguiente(progreso: List[ProgressItem]) -> Recommendatio
 
     return None
 
+
 def fetch_roadmap_desde_progreso(
     progreso: List[ProgressItem],
     fetch_next_for_avance: FetchNextFunction
 ) -> List[Dict[str, Any]]:
     """
-    Genera un roadmap en memoria a partir del progreso inicial.
-    EXCLUYENDO RAPs completamente del roadmap
+    Genera secuencia de actividades recomendadas (roadmap) basado en progreso actual.
+    
+    Simula el avance del alumno aplicando estrategias de recomendación de forma
+    iterativa hasta completar un camino de aprendizaje.
+    
+    Args:
+        progreso: Progreso inicial del alumno
+        fetch_next_for_avance: Función para obtener siguiente actividad
+        
+    Returns:
+        List[Dict[str, Any]]: Secuencia de actividades recomendadas con estrategias
     """
     roadmap: List[Dict[str, Any]] = []
     seen: set[tuple[Optional[str], Optional[str], str]] = set()
@@ -155,17 +218,27 @@ def fetch_roadmap_desde_progreso(
 
     return roadmap
 
+
 # ============================================================================
 # FUNCIONES DE ACTIVIDADES SIGUIENTES (EXCLUYENDO RAPs)
 # ============================================================================
 
 def fetch_siguiente_actividad_mejorada(correo: str) -> Optional[Dict[str, Any]]:
     """
-    Encuentra siguiente actividad EXCLUYENDO RAPs completamente
+    Encuentra siguiente actividad usando estrategia mejorada que considera:
+    - Unidad actual del alumno
+    - Prioridad por actividades en misma unidad
+    - Exclusión de actividades RAP
+    
+    Args:
+        correo: Correo del alumno
+        
+    Returns:
+        Optional[Dict[str, Any]]: Siguiente actividad recomendada con prioridad
     """
     driver: Driver = obtener_driver()
     
-    cypher: str = """
+    cypher = """
     // ESTRATEGIA MEJORADA - EXCLUIR RAPs completamente
     MATCH (a:Alumno {correo: $correo})
     
@@ -229,13 +302,21 @@ def fetch_siguiente_actividad_mejorada(correo: str) -> Optional[Dict[str, Any]]:
     finally:
         driver.close()
 
+
 def fetch_siguiente_actividad_simple(correo: str) -> Optional[Dict[str, Any]]:
     """
-    VERSIÓN SIMPLE - EXCLUYENDO RAPs completamente
+    Versión simple para encontrar siguiente actividad no completada.
+    Excluye actividades RAP y busca cualquier actividad disponible.
+    
+    Args:
+        correo: Correo del alumno
+        
+    Returns:
+        Optional[Dict[str, Any]]: Siguiente actividad disponible
     """
     driver: Driver = obtener_driver()
     
-    cypher: str = """
+    cypher = """
     // QUERY SIMPLE: EXCLUIR RAPs completamente
     MATCH (a:Alumno {correo: $correo})
     MATCH (siguiente:Cuestionario|Ayudantia)  // Solo Cuestionarios y Ayudantias
@@ -258,10 +339,20 @@ def fetch_siguiente_actividad_simple(correo: str) -> Optional[Dict[str, Any]]:
     finally:
         driver.close()
 
-# Alias para compatibilidad
+
 def fetch_siguiente_actividad(correo: str) -> Optional[Dict[str, Any]]:
-    """Alias para mantener compatibilidad"""
+    """
+    Alias principal para mantener compatibilidad con el sistema.
+    Utiliza la versión simple por defecto.
+    
+    Args:
+        correo: Correo del alumno
+        
+    Returns:
+        Optional[Dict[str, Any]]: Siguiente actividad recomendada
+    """
     return fetch_siguiente_actividad_simple(correo)
+
 
 # ============================================================================
 # FUNCIONES DE ESTADÍSTICAS Y ANÁLISIS (EXCLUYENDO RAPs)
@@ -269,11 +360,14 @@ def fetch_siguiente_actividad(correo: str) -> Optional[Dict[str, Any]]:
 
 def fetch_estadisticas_globales() -> Dict[str, Dict[str, Dict[str, Any]]]:
     """
-    Obtiene estadísticas globales EXCLUYENDO RAPs completamente
+    Obtiene métricas globales de todas las actividades excluyendo RAPs.
+    
+    Returns:
+        Dict: Estadísticas organizadas por tipo y nombre de actividad
     """
     driver: Driver = obtener_driver()
     
-    cypher: str = """
+    cypher = """
     // Estadísticas de duración por actividad (EXCLUYENDO RAPs)
     MATCH (a:Alumno)-[r:Intento|Completado|Perfecto]->(act)
     WHERE r.duration_seconds IS NOT NULL AND r.duration_seconds > 0
@@ -311,13 +405,20 @@ def fetch_estadisticas_globales() -> Dict[str, Dict[str, Dict[str, Any]]]:
     finally:
         driver.close()
 
+
 def fetch_estadisticas_alumno(correo: str) -> Dict[str, Any]:
     """
-    Obtiene estadísticas de un alumno EXCLUYENDO RAPs completamente
+    Obtiene análisis detallado del progreso de un alumno excluyendo RAPs.
+    
+    Args:
+        correo: Correo del alumno
+        
+    Returns:
+        Dict: Estadísticas detalladas con resumen y datos por actividad
     """
     driver: Driver = obtener_driver()
     
-    cypher: str = """
+    cypher = """
     // Estadísticas avanzadas EXCLUYENDO RAPs
     MATCH (a:Alumno {correo: $correo})-[r:Intento|Completado|Perfecto]->(act)
     WHERE r.duration_seconds IS NOT NULL AND r.duration_seconds > 0
@@ -386,14 +487,21 @@ def fetch_estadisticas_alumno(correo: str) -> Dict[str, Any]:
     finally:
         driver.close()
 
+
 def fetch_verificar_alumno_perfecto(correo: str) -> bool:
     """
-    Verifica si un alumno tiene todas sus actividades en estado Perfecto
-    EXCLUYENDO RAPs completamente
+    Verifica si un alumno tiene todas sus actividades en estado Perfecto.
+    Excluye actividades RAP del análisis.
+    
+    Args:
+        correo: Correo del alumno
+        
+    Returns:
+        bool: True si todas las actividades están en estado Perfecto
     """
     driver: Driver = obtener_driver()
     
-    cypher: str = """
+    cypher = """
     // Verificación EXCLUYENDO RAPs
     MATCH (a:Alumno {correo: $correo})-[r]->(act)
     WHERE type(r) IN ["Intento","Completado","Perfecto"]
@@ -412,14 +520,21 @@ def fetch_verificar_alumno_perfecto(correo: str) -> bool:
     finally:
         driver.close()
 
+
 def fetch_actividades_lentas_alumno(correo: str) -> List[Dict[str, Any]]:
     """
-    Obtiene las actividades donde el alumno es más lento que el promedio
-    EXCLUYENDO RAPs completamente
+    Identifica actividades donde el alumno es significativamente más lento
+    que el promedio global, excluyendo RAPs.
+    
+    Args:
+        correo: Correo del alumno
+        
+    Returns:
+        List[Dict[str, Any]]: Top 10 actividades más lentas con métricas comparativas
     """
     driver: Driver = obtener_driver()
     
-    cypher: str = """
+    cypher = """
     // Obtener estadísticas del alumno vs globales (EXCLUYENDO RAPs)
     MATCH (a:Alumno {correo: $correo})-[r:Intento|Completado|Perfecto]->(act)
     WHERE r.duration_seconds IS NOT NULL 
@@ -479,6 +594,7 @@ def fetch_actividades_lentas_alumno(correo: str) -> List[Dict[str, Any]]:
             return actividades_lentas
     finally:
         driver.close()
+
 
 __all__ = [
     'fetch_alumnos',

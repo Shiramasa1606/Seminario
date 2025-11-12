@@ -1,6 +1,41 @@
-# Neo4J/consultar.py
+"""
+Módulo de Consultas Inteligentes - Cerebro del Sistema
+
+Procesa datos de Neo4J y aplica algoritmos inteligentes para generar
+recomendaciones personalizadas, roadmaps de aprendizaje y análisis comparativos.
+Actúa como puente entre la capa de datos (neo_queries.py) y la interfaz (main.py).
+
+Funciones principales:
+    - Motor de recomendaciones con jerarquía de prioridades
+    - Generación de roadmaps de aprendizaje adaptativos
+    - Análisis comparativo de rendimiento vs promedios globales
+    - Sistema de insights automáticos basados en métricas
+
+Estrategias implementadas:
+    - 🔄 Refuerzo: Para actividades pendientes (Intento)
+    - 📈 Mejora: Para actividades completadas pero no perfectas
+    - ⏰ Refuerzo_tiempo: Para mejorar eficiencia temporal
+    - 🚀 Nuevas: Para expandir conocimiento con nuevas actividades
+
+Características:
+    - Exclusión consistente de actividades RAP
+    - Ordenamiento por antigüedad (más antiguas primero)
+    - Análisis de eficiencia comparativa
+    - Generación automática de insights
+"""
+
 from typing import List, Any, Optional, Dict, Callable, Tuple
 
+# ============================================================================
+# CONSTANTES
+# ============================================================================
+
+MAX_ACTIVIDADES_NUEVAS: int = 10
+FECHA_MAXIMA: str = "9999-12-31"
+UMBRAL_MUY_LENTO: float = 30.0
+UMBRAL_LENTO: float = 10.0
+UMBRAL_EFICIENTE: float = -10.0
+UMBRAL_MUY_EFICIENTE: float = -25.0
 
 # Define type aliases for better clarity
 ActivityDict = Dict[str, Any]
@@ -9,15 +44,26 @@ RecommendationResult = Optional[Dict[str, Any]]
 FetchNextFunction = Callable[[], Optional[ActivityDict]]
 
 
+# ============================================================================
+# FUNCIONES DE RECOMENDACIONES
+# ============================================================================
+
 def recomendar_siguiente_from_progress(progreso: List[ProgressItem]) -> RecommendationResult:
     """
-    NUEVA JERARQUÍA DE PRIORIDADES por ORDEN DE ANTIGÜEDAD:
-    1. 🚀 NUEVAS ACTIVIDADES (no en progreso) - señal para buscar en Neo4J
-    2. 🔄 ACTIVIDADES NO TERMINADAS (Intento) - MÁS ANTIGUA primero
-    3. 📈 ACTIVIDADES NO PERFECTAS (Completado) - MÁS ANTIGUA primero
-    4. ⏰ REFUERZO DE TIEMPO - MENOS EFICIENTE primero
+    Analiza el progreso y recomienda siguiente actividad usando jerarquía de prioridades.
     
-    EXCLUYE RAPs completamente del roadmap
+    Jerarquía de prioridades (por orden de antigüedad):
+        1. 🚀 NUEVAS ACTIVIDADES (no en progreso) - señal para buscar en Neo4J
+        2. 🔄 ACTIVIDADES NO TERMINADAS (Intento) - MÁS ANTIGUA primero
+        3. 📈 ACTIVIDADES NO PERFECTAS (Completado) - MÁS ANTIGUA primero
+        4. ⏰ REFUERZO DE TIEMPO - MENOS EFICIENTE primero
+
+    Args:
+        progreso: Lista del progreso actual del alumno
+
+    Returns:
+        RecommendationResult: Diccionario con estrategia y actividad recomendada,
+                             o señal para buscar nuevas actividades
     """
     if not progreso:
         return {"estrategia": "nuevas", "actividad": None}
@@ -31,49 +77,72 @@ def recomendar_siguiente_from_progress(progreso: List[ProgressItem]) -> Recommen
     # 1. Buscar actividades en Intento (no terminadas) - MÁS ANTIGUA primero
     intentos = [p for p in progreso_filtrado if p.get("estado") == "Intento"]
     if intentos:
-        # Ordenar por fecha de inicio (más antigua primero)
-        intentos_ordenados = sorted(
-            intentos, 
-            key=lambda x: x.get("start") or "9999-12-31"  # Si no tiene fecha, va al final
-        )
+        intentos_ordenados = _ordenar_por_antiguedad(intentos)
         return {"estrategia": "refuerzo", "actividad": intentos_ordenados[0]}
 
     # 2. Buscar actividades en Completado (no perfectas) - MÁS ANTIGUA primero
     completados = [p for p in progreso_filtrado if p.get("estado") == "Completado"]
     if completados:
-        # Ordenar por fecha de inicio (más antigua primero)
-        completados_ordenados = sorted(
-            completados,
-            key=lambda x: x.get("start") or "9999-12-31"  # Si no tiene fecha, va al final
-        )
+        completados_ordenados = _ordenar_por_antiguedad(completados)
         return {"estrategia": "mejora", "actividad": completados_ordenados[0]}
 
     # 3. Si todo está Perfecto, buscar nuevas actividades
     return {"estrategia": "nuevas", "actividad": None}
 
-def generar_roadmap_from_progress_and_fetcher(
-    progreso: List[ProgressItem],
-    fetch_next_for_avance: FetchNextFunction,
-    actividades_lentas: Optional[List[ActivityDict]] = None
-) -> List[Dict[str, Any]]:
-    """
-    Genera un roadmap en memoria con JERARQUÍA DE PRIORIDADES SIN LÍMITES:
-    1. 🔄 ACTIVIDADES EN INTENTO (no terminadas)
-    2. ⏰ ACTIVIDADES PARA MEJORAR TIEMPO (TODAS las identificadas como lentas)
-    3. 📈 ACTIVIDADES PARA MEJORAR (Completado → Perfecto) 
-    4. 🚀 NUEVAS ACTIVIDADES (no en progreso)
-    """
-    roadmap: List[Dict[str, Any]] = []
-    actividades_vistas: set[Tuple[Optional[str], Optional[str]]] = set()
-    
-    # Copia en memoria para simular progresos (excluyendo RAPs)
-    prog_map: Dict[Tuple[Optional[str], Optional[str]], ActivityDict] = {}
-    for p in progreso:
-        if p.get("tipo") != "RAP":  # Excluir RAPs del progreso simulado
-            key = (p.get("tipo"), p.get("nombre"))
-            prog_map[key] = p
 
-    # Preparar actividades por categorías según la jerarquía
+def _ordenar_por_antiguedad(actividades: List[ProgressItem]) -> List[ProgressItem]:
+    """
+    Ordena actividades por fecha de inicio (más antigua primero).
+    
+    Args:
+        actividades: Lista de actividades a ordenar
+        
+    Returns:
+        Lista ordenada por antigüedad
+    """
+    return sorted(
+        actividades, 
+        key=lambda x: x.get("start") or FECHA_MAXIMA
+    )
+
+
+# ============================================================================
+# FUNCIONES DE GESTIÓN DE ROADMAP - REFACTORIZADAS
+# ============================================================================
+
+def _crear_mapa_progreso(progreso: List[ProgressItem]) -> Dict[Tuple[Optional[str], Optional[str]], ActivityDict]:
+    """
+    Crea un mapa de progreso en memoria excluyendo actividades RAP.
+    
+    Args:
+        progreso: Progreso actual del alumno
+        
+    Returns:
+        Mapa de actividades por (tipo, nombre)
+    """
+    return {
+        (p.get("tipo"), p.get("nombre")): p 
+        for p in progreso 
+        if p.get("tipo") != "RAP"
+    }
+
+
+def _clasificar_actividades_por_estrategia(
+    prog_map: Dict[Tuple[Optional[str], Optional[str]], ActivityDict],
+    actividades_vistas: set[Tuple[Optional[str], Optional[str]]],
+    actividades_lentas: Optional[List[ActivityDict]] = None
+) -> Tuple[List[ActivityDict], List[ActivityDict], List[ActivityDict]]:
+    """
+    Clasifica actividades en categorías según estrategias.
+    
+    Args:
+        prog_map: Mapa de progreso
+        actividades_vistas: Conjunto de actividades ya procesadas
+        actividades_lentas: Lista de actividades con baja eficiencia
+        
+    Returns:
+        Tupla con (actividades_intento, actividades_mejora, actividades_lentas_activas)
+    """
     actividades_intento: List[ActivityDict] = []
     actividades_mejora: List[ActivityDict] = []
     actividades_lentas_activas: List[ActivityDict] = []
@@ -88,88 +157,124 @@ def generar_roadmap_from_progress_and_fetcher(
         elif estado == "Completado" and act_key not in actividades_vistas:
             actividades_mejora.append(actividad)
     
-    # PREPARAR ACTIVIDADES LENTAS - INCLUIR TODAS LAS IDENTIFICADAS
+    # Procesar actividades lentas si están disponibles
     if actividades_lentas:
-        print(f"🔍 Procesando {len(actividades_lentas)} actividades lentas identificadas...")
-        procesadas = 0
-        for act_lenta in actividades_lentas:
-            act_tipo: Optional[str] = act_lenta.get("tipo")
-            act_nombre: Optional[str] = act_lenta.get("nombre")
-            act_key = (act_tipo, act_nombre)
-            
-            # INCLUIR actividades lentas que existen en el progreso y no están en el roadmap
-            if act_key in prog_map and act_key not in actividades_vistas:
-                # Combinar datos del progreso con análisis de tiempo
-                actividad_combinada = {**prog_map[act_key], **act_lenta}
-                actividades_lentas_activas.append(actividad_combinada)
-                procesadas += 1
-        print(f"🔍 Se agregaron {procesadas} actividades lentas al roadmap.")
-        
-        # Ordenar por diferencia porcentual (más lentas primero)
-        actividades_lentas_activas.sort(
-            key=lambda x: x.get('diferencia_porcentual', 0), 
-            reverse=True
+        actividades_lentas_activas = _procesar_actividades_lentas(
+            actividades_lentas, prog_map, actividades_vistas
         )
-        print(f"   📊 Actividades lentas válidas para roadmap: {len(actividades_lentas_activas)}")
+    
+    return actividades_intento, actividades_mejora, actividades_lentas_activas
 
-    # Función auxiliar para obtener siguiente actividad no-RAP
+
+def _procesar_actividades_lentas(
+    actividades_lentas: List[ActivityDict],
+    prog_map: Dict[Tuple[Optional[str], Optional[str]], ActivityDict],
+    actividades_vistas: set[Tuple[Optional[str], Optional[str]]]
+) -> List[ActivityDict]:
+    """
+    Procesa y filtra actividades lentas para incluirlas en el roadmap.
+    
+    Args:
+        actividades_lentas: Lista de actividades identificadas como lentas
+        prog_map: Mapa de progreso actual
+        actividades_vistas: Actividades ya procesadas
+        
+    Returns:
+        Lista de actividades lentas válidas para el roadmap
+    """
+    actividades_lentas_activas: List[ActivityDict] = []
+    procesadas = 0
+    
+    print(f"🔍 Procesando {len(actividades_lentas)} actividades lentas identificadas...")
+    
+    for act_lenta in actividades_lentas:
+        act_tipo: Optional[str] = act_lenta.get("tipo")
+        act_nombre: Optional[str] = act_lenta.get("nombre")
+        act_key = (act_tipo, act_nombre)
+        
+        # INCLUIR actividades lentas que existen en el progreso y no están en el roadmap
+        if act_key in prog_map and act_key not in actividades_vistas:
+            # Combinar datos del progreso con análisis de tiempo
+            actividad_combinada = {**prog_map[act_key], **act_lenta}
+            actividades_lentas_activas.append(actividad_combinada)
+            procesadas += 1
+    
+    print(f"🔍 Se agregaron {procesadas} actividades lentas al roadmap.")
+    
+    # Ordenar por diferencia porcentual (más lentas primero)
+    actividades_lentas_activas.sort(
+        key=lambda x: x.get('diferencia_porcentual', 0), 
+        reverse=True
+    )
+    print(f"   📊 Actividades lentas válidas para roadmap: {len(actividades_lentas_activas)}")
+    
+    return actividades_lentas_activas
+
+
+def _agregar_actividades_por_estrategia(
+    roadmap: List[Dict[str, Any]],
+    actividades_vistas: set[Tuple[Optional[str], Optional[str]]],
+    actividades: List[ActivityDict],
+    estrategia: str,
+    motivo_base: str,
+    formato_motivo: Optional[Callable[[ActivityDict], str]] = None
+) -> None:
+    """
+    Agrega actividades al roadmap según la estrategia especificada.
+    
+    Args:
+        roadmap: Lista actual del roadmap
+        actividades_vistas: Conjunto de actividades ya procesadas
+        actividades: Lista de actividades a agregar
+        estrategia: Estrategia a aplicar
+        motivo_base: Motivo base para la estrategia
+        formato_motivo: Función opcional para formatear el motivo
+    """
+    for actividad in actividades:
+        act_tipo = actividad.get("tipo")
+        act_nombre = actividad.get("nombre")
+        act_key = (act_tipo, act_nombre)
+        
+        if act_key not in actividades_vistas:
+            actividades_vistas.add(act_key)
+            
+            # Construir motivo
+            motivo = motivo_base
+            if formato_motivo:
+                motivo = formato_motivo(actividad)
+            
+            roadmap.append({
+                "estrategia": estrategia,
+                "actividad": actividad,
+                "motivo": motivo
+            })
+
+
+def _agregar_actividades_nuevas(
+    roadmap: List[Dict[str, Any]],
+    actividades_vistas: set[Tuple[Optional[str], Optional[str]]],
+    fetch_next_for_avance: FetchNextFunction
+) -> int:
+    """
+    Agrega nuevas actividades al roadmap hasta alcanzar el máximo razonable.
+    
+    Args:
+        roadmap: Lista actual del roadmap
+        actividades_vistas: Conjunto de actividades ya procesadas
+        fetch_next_for_avance: Función para obtener siguiente actividad
+        
+    Returns:
+        Número de nuevas actividades agregadas
+    """
     def obtener_siguiente_no_rap() -> Optional[ActivityDict]:
         siguiente = fetch_next_for_avance()
         while siguiente and siguiente.get("tipo") == "RAP":
             siguiente = fetch_next_for_avance()
         return siguiente
 
-    # ========== JERARQUÍA DE PRIORIDADES SIN LÍMITES ==========
-    
-    # 1. 🔄 ACTIVIDADES EN INTENTO (prioridad máxima) - TODAS
-    for actividad in actividades_intento:
-        act_tipo = actividad.get("tipo")
-        act_nombre = actividad.get("nombre")
-        act_key = (act_tipo, act_nombre)
-        
-        if act_key not in actividades_vistas:
-            actividades_vistas.add(act_key)
-            roadmap.append({
-                "estrategia": "refuerzo",
-                "actividad": actividad,
-                "motivo": "Terminar actividad pendiente"
-            })
-
-    # 2. ⏰ ACTIVIDADES PARA MEJORAR TIEMPO - TODAS LAS IDENTIFICADAS
-    for actividad_lenta in actividades_lentas_activas:
-        act_tipo = actividad_lenta.get("tipo")
-        act_nombre = actividad_lenta.get("nombre")
-        act_key = (act_tipo, act_nombre)
-        
-        if act_key not in actividades_vistas:
-            actividades_vistas.add(act_key)
-            diferencia = actividad_lenta.get('diferencia_porcentual', 0)
-            roadmap.append({
-                "estrategia": "refuerzo_tiempo",
-                "actividad": actividad_lenta,
-                "motivo": f"Mejorar eficiencia (+{diferencia:.1f}% vs promedio)"
-            })
-
-    # 3. 📈 ACTIVIDADES PARA MEJORAR (Completado → Perfecto) - TODAS
-    for actividad in actividades_mejora:
-        act_tipo = actividad.get("tipo")
-        act_nombre = actividad.get("nombre")
-        act_key = (act_tipo, act_nombre)
-        
-        if act_key not in actividades_vistas:
-            actividades_vistas.add(act_key)
-            roadmap.append({
-                "estrategia": "mejora", 
-                "actividad": actividad,
-                "motivo": "Buscar calificación perfecta"
-            })
-
-    # 4. 🚀 ACTIVIDADES NUEVAS - BUSCAR HASTA 10 COMO MÁXIMO RAZONABLE
-    # (Para evitar roadmap infinito si hay muchas actividades disponibles)
     actividades_nuevas_agregadas = 0
-    max_nuevas_razonable = 10
     
-    while actividades_nuevas_agregadas < max_nuevas_razonable:
+    while actividades_nuevas_agregadas < MAX_ACTIVIDADES_NUEVAS:
         siguiente = obtener_siguiente_no_rap()
         if not siguiente:
             break
@@ -189,7 +294,95 @@ def generar_roadmap_from_progress_and_fetcher(
         else:
             # Si encontramos una actividad que ya está en el roadmap, salir
             break
+    
+    return actividades_nuevas_agregadas
 
+
+def generar_roadmap_from_progress_and_fetcher(
+    progreso: List[ProgressItem],
+    fetch_next_for_avance: FetchNextFunction,
+    actividades_lentas: Optional[List[ActivityDict]] = None
+) -> List[Dict[str, Any]]:
+    """
+    Genera secuencia completa de aprendizaje (roadmap) con jerarquía de prioridades.
+    
+    Estrategias aplicadas en orden:
+        1. 🔄 ACTIVIDADES EN INTENTO (no terminadas) - TODAS
+        2. ⏰ ACTIVIDADES PARA MEJORAR TIEMPO (TODAS las identificadas como lentas)
+        3. 📈 ACTIVIDADES PARA MEJORAR (Completado → Perfecto) - TODAS
+        4. 🚀 NUEVAS ACTIVIDADES (no en progreso) - hasta 10 como máximo razonable
+
+    Args:
+        progreso: Progreso actual del alumno
+        fetch_next_for_avance: Función para obtener siguiente actividad
+        actividades_lentas: Lista de actividades con baja eficiencia
+
+    Returns:
+        List[Dict[str, Any]]: Roadmap ordenado con actividades y estrategias
+    """
+    roadmap: List[Dict[str, Any]] = []
+    actividades_vistas: set[Tuple[Optional[str], Optional[str]]] = set()
+    
+    # 1. Preparar datos
+    prog_map = _crear_mapa_progreso(progreso)
+    
+    # 2. Clasificar actividades por estrategia
+    actividades_intento, actividades_mejora, actividades_lentas_activas = _clasificar_actividades_por_estrategia(
+        prog_map, actividades_vistas, actividades_lentas
+    )
+    
+    # 3. Aplicar jerarquía de prioridades
+    
+    # 3.1. ACTIVIDADES EN INTENTO (prioridad máxima)
+    _agregar_actividades_por_estrategia(
+        roadmap, actividades_vistas, actividades_intento,
+        "refuerzo", "Terminar actividad pendiente"
+    )
+    
+    # 3.2. ACTIVIDADES PARA MEJORAR TIEMPO
+    def formatear_motivo_tiempo(actividad: ActivityDict) -> str:
+        diferencia = actividad.get('diferencia_porcentual', 0)
+        return f"Mejorar eficiencia (+{diferencia:.1f}% vs promedio)"
+    
+    _agregar_actividades_por_estrategia(
+        roadmap, actividades_vistas, actividades_lentas_activas,
+        "refuerzo_tiempo", "", formatear_motivo_tiempo
+    )
+    
+    # 3.3. ACTIVIDADES PARA MEJORAR (Completado → Perfecto)
+    _agregar_actividades_por_estrategia(
+        roadmap, actividades_vistas, actividades_mejora,
+        "mejora", "Buscar calificación perfecta"
+    )
+    
+    # 3.4. ACTIVIDADES NUEVAS
+    actividades_nuevas_agregadas = _agregar_actividades_nuevas(
+        roadmap, actividades_vistas, fetch_next_for_avance
+    )
+    
+    # 4. Reporte final
+    _mostrar_resumen_roadmap(roadmap, actividades_intento, actividades_lentas_activas, actividades_mejora, actividades_nuevas_agregadas)
+    
+    return roadmap
+
+
+def _mostrar_resumen_roadmap(
+    roadmap: List[Dict[str, Any]],
+    actividades_intento: List[ActivityDict],
+    actividades_lentas_activas: List[ActivityDict],
+    actividades_mejora: List[ActivityDict],
+    actividades_nuevas_agregadas: int
+) -> None:
+    """
+    Muestra resumen del roadmap generado.
+    
+    Args:
+        roadmap: Roadmap completo
+        actividades_intento: Actividades en intento procesadas
+        actividades_lentas_activas: Actividades lentas procesadas
+        actividades_mejora: Actividades para mejorar procesadas
+        actividades_nuevas_agregadas: Nuevas actividades agregadas
+    """
     print(f"\n")
     print(f"   📋 Roadmap generado con {len(roadmap)} actividades totales:")
     print(f"   🔄 Actividades en intento: {len(actividades_intento)}")
@@ -197,50 +390,68 @@ def generar_roadmap_from_progress_and_fetcher(
     print(f"   📈 Actividades para mejorar: {len(actividades_mejora)}")
     print(f"   🚀 Actividades nuevas: {actividades_nuevas_agregadas}")
 
-    return roadmap
 
-
-# CORRECCIÓN: Versión simplificada sin problemas de tipos
 def generar_roadmap_para_alumno(
     correo: str,
+    fetch_progreso_func: Callable[[str], List[Dict[str, Any]]],
     fetch_next_func: FetchNextFunction
 ) -> List[Dict[str, Any]]:
     """
-    Función conveniente para generar roadmap para un alumno específico
-    LOS RAPs PUEDEN APARECER EN EL ROADMAP PERO NO AFECTAN EL ESTADO DE PROGRESO
-    """
-    from Neo4J.neo_queries import fetch_progreso_alumno
+    Función conveniente para generar roadmap completo para un alumno específico.
     
-    # Obtener progreso del alumno - esto devuelve List[Dict[str, Any]]
-    progreso = fetch_progreso_alumno(correo)
+    Combina obtención de progreso y generación de roadmap en una sola operación.
+    Excluye actividades RAP del análisis.
+
+    Args:
+        correo: Correo del alumno
+        fetch_progreso_func: Función para obtener progreso del alumno
+        fetch_next_func: Función para obtener siguiente actividad
+
+    Returns:
+        List[Dict[str, Any]]: Roadmap personalizado para el alumno
+    """
+    # Obtener progreso del alumno
+    progreso = fetch_progreso_func(correo)
     
     # Asegurarnos de que tenemos una lista válida
-    # NOTA: fetch_progreso_alumno() siempre devuelve lista, nunca None
     if not progreso:
         progreso = []
     
     return generar_roadmap_from_progress_and_fetcher(progreso, fetch_next_func)
 
-# NUEVAS FUNCIONES PARA ANÁLISIS COMPARATIVO - CORREGIDAS
 
-def analizar_rendimiento_comparativo(correo: str) -> Dict[str, Any]:
+# ============================================================================
+# FUNCIONES DE ANÁLISIS COMPARATIVO
+# ============================================================================
+
+def analizar_rendimiento_comparativo(
+    correo: str,
+    fetch_verificar_perfecto_func: Callable[[str], bool],
+    fetch_estadisticas_globales_func: Callable[[], Dict[str, Dict[str, Dict[str, Any]]]],
+    fetch_estadisticas_alumno_func: Callable[[str], Dict[str, Any]]
+) -> Dict[str, Any]:
     """
-    Analiza el rendimiento del alumno comparado con las estadísticas globales
-    EXCLUYE RAPs del análisis comparativo
-    """
-    from Neo4J.neo_queries import (
-        fetch_estadisticas_globales,  # CORREGIDO: nombre correcto
-        fetch_estadisticas_alumno,    # CORREGIDO: nombre correcto
-        fetch_verificar_alumno_perfecto  # CORREGIDO: nombre correcto
-    )
+    Analiza el rendimiento del alumno comparado con estadísticas globales.
     
+    Requiere que el alumno tenga todas las actividades en estado 'Perfecto'
+    para realizar un análisis comparativo completo. Excluye RAPs del análisis.
+
+    Args:
+        correo: Correo del alumno a analizar
+        fetch_verificar_perfecto_func: Función para verificar si tiene todo perfecto
+        fetch_estadisticas_globales_func: Función para obtener estadísticas globales
+        fetch_estadisticas_alumno_func: Función para obtener estadísticas del alumno
+
+    Returns:
+        Dict[str, Any]: Análisis completo con comparativas, insights y recomendaciones
+    """
     # Verificar si el alumno tiene todo perfecto (EXCLUYENDO RAPs)
-    if not fetch_verificar_alumno_perfecto(correo):
+    if not fetch_verificar_perfecto_func(correo):
         return {"error": "El alumno no tiene todas las actividades en estado Perfecto"}
     
     print("📊 Obteniendo datos para análisis comparativo...")
-    stats_globales = fetch_estadisticas_globales()
-    stats_alumno = fetch_estadisticas_alumno(correo)
+    stats_globales = fetch_estadisticas_globales_func()
+    stats_alumno = fetch_estadisticas_alumno_func(correo)
     
     # Filtrar actividades del alumno para excluir RAPs
     actividades_alumno_sin_raps = {
@@ -276,39 +487,9 @@ def analizar_rendimiento_comparativo(correo: str) -> Dict[str, Any]:
             continue
             
         actividades_analizadas += 1
-        duracion_promedio_alumno: float = sum(duraciones_alumno) / len(duraciones_alumno)
-        duracion_mejor_alumno: float = min(duraciones_alumno)  # Mejor tiempo = más eficiente
         
-        comparativa: Dict[str, Any] = {
-            "actividad": nombre,
-            "tipo": tipo,
-            "duracion_promedio_alumno": duracion_promedio_alumno,
-            "duracion_mejor_alumno": duracion_mejor_alumno,
-            "total_intentos": len(actividad_alumno["intentos"]),
-            "puntaje_final": actividad_alumno["mejor_puntaje"]
-        }
-        
-        # Comparar con estadísticas globales si están disponibles
-        if tipo in stats_globales and nombre in stats_globales[tipo]:
-            stats_global = stats_globales[tipo][nombre]
-            duracion_promedio_global: float = stats_global["duracion_promedio"]
-            
-            comparativa["duracion_promedio_global"] = duracion_promedio_global
-            comparativa["diferencia_promedio"] = duracion_promedio_alumno - duracion_promedio_global
-            comparativa["diferencia_porcentual"] = ((duracion_promedio_alumno - duracion_promedio_global) / duracion_promedio_global) * 100 if duracion_promedio_global > 0 else 0
-            
-            # Categorizar eficiencia
-            if comparativa["diferencia_porcentual"] < -25:
-                comparativa["eficiencia"] = "MUY_EFICIENTE"
-            elif comparativa["diferencia_porcentual"] < -10:
-                comparativa["eficiencia"] = "EFICIENTE"
-            elif comparativa["diferencia_porcentual"] < 10:
-                comparativa["eficiencia"] = "PROMEDIO"
-            elif comparativa["diferencia_porcentual"] < 30:
-                comparativa["eficiencia"] = "LENTO"
-            else:
-                comparativa["eficiencia"] = "MUY_LENTO"
-        
+        # Crear comparativa
+        comparativa = _crear_comparativa_actividad(actividad_alumno, tipo, nombre, duraciones_alumno, stats_globales)
         analisis["comparativas"].append(comparativa)
     
     # Actualizar contador real de actividades analizadas
@@ -320,12 +501,87 @@ def analizar_rendimiento_comparativo(correo: str) -> Dict[str, Any]:
     
     return analisis
 
+
+def _crear_comparativa_actividad(
+    actividad_alumno: Dict[str, Any],
+    tipo: str,
+    nombre: str,
+    duraciones_alumno: List[float],
+    stats_globales: Dict[str, Dict[str, Dict[str, Any]]]
+) -> Dict[str, Any]:
+    """
+    Crea una comparativa individual para una actividad.
+    
+    Args:
+        actividad_alumno: Datos de la actividad del alumno
+        tipo: Tipo de actividad
+        nombre: Nombre de la actividad
+        duraciones_alumno: Lista de duraciones del alumno
+        stats_globales: Estadísticas globales
+        
+    Returns:
+        Dict con datos comparativos de la actividad
+    """
+    duracion_promedio_alumno: float = sum(duraciones_alumno) / len(duraciones_alumno)
+    duracion_mejor_alumno: float = min(duraciones_alumno)  # Mejor tiempo = más eficiente
+    
+    comparativa: Dict[str, Any] = {
+        "actividad": nombre,
+        "tipo": tipo,
+        "duracion_promedio_alumno": duracion_promedio_alumno,
+        "duracion_mejor_alumno": duracion_mejor_alumno,
+        "total_intentos": len(actividad_alumno["intentos"]),
+        "puntaje_final": actividad_alumno["mejor_puntaje"]
+    }
+    
+    # Comparar con estadísticas globales si están disponibles
+    if tipo in stats_globales and nombre in stats_globales[tipo]:
+        stats_global = stats_globales[tipo][nombre]
+        duracion_promedio_global: float = stats_global["duracion_promedio"]
+        
+        comparativa["duracion_promedio_global"] = duracion_promedio_global
+        comparativa["diferencia_promedio"] = duracion_promedio_alumno - duracion_promedio_global
+        comparativa["diferencia_porcentual"] = ((duracion_promedio_alumno - duracion_promedio_global) / duracion_promedio_global) * 100 if duracion_promedio_global > 0 else 0
+        
+        # Categorizar eficiencia
+        comparativa["eficiencia"] = _categorizar_eficiencia(comparativa["diferencia_porcentual"])
+    
+    return comparativa
+
+
+def _categorizar_eficiencia(diferencia_porcentual: float) -> str:
+    """
+    Categoriza la eficiencia basándose en la diferencia porcentual.
+    
+    Args:
+        diferencia_porcentual: Diferencia porcentual vs promedio
+        
+    Returns:
+        str: Categoría de eficiencia
+    """
+    if diferencia_porcentual < UMBRAL_MUY_EFICIENTE:
+        return "MUY_EFICIENTE"
+    elif diferencia_porcentual < UMBRAL_EFICIENTE:
+        return "EFICIENTE"
+    elif diferencia_porcentual < UMBRAL_LENTO:
+        return "PROMEDIO"
+    elif diferencia_porcentual < UMBRAL_MUY_LENTO:
+        return "LENTO"
+    else:
+        return "MUY_LENTO"
+
+
 def _generar_insights_comparativos(analisis: Dict[str, Any]) -> None:
     """
-    Genera insights basados en el análisis comparativo de tiempos
-    EXCLUYE RAPs del análisis
+    Genera insights automáticos basados en el análisis comparativo de tiempos.
+    
+    Categoriza actividades y genera recomendaciones específicas según
+    los patrones de eficiencia identificados. Excluye RAPs del análisis.
+
+    Args:
+        analisis: Análisis con comparativas de rendimiento
     """
-    comparativas: List[Dict[str, Any]] = analisis["comparativas"]
+    comparativas: List[Dict[str, Any]] = analisis.get("comparativas", [])
     insights: Dict[str, List[str]] = analisis["insights"]
     
     # Identificar fortalezas (actividades muy eficientes)
@@ -368,8 +624,17 @@ def _generar_insights_comparativos(analisis: Dict[str, Any]) -> None:
     else:
         insights["recomendaciones"].append("🌟 Buen trabajo en alcanzar todos los Perfectos, ahora enfócate en la eficiencia")
 
+
 def formatear_tiempo_analisis(segundos: float) -> str:
-    """Formatea segundos a formato legible para el análisis"""
+    """
+    Convierte segundos a formato legible para análisis y reportes.
+    
+    Args:
+        segundos: Tiempo en segundos
+        
+    Returns:
+        str: Tiempo formateado en segundos, minutos u horas según corresponda
+    """
     if segundos < 60:
         return f"{segundos:.0f} segundos"
     elif segundos < 3600:
