@@ -49,42 +49,45 @@ def extraer_paralelo(grupos_str: str) -> str:
     """
     Extrae el paralelo de la columna Grupos del CSV.
     
-    La columna Grupos puede contener múltiples valores separados por comas.
-    Esta función busca específicamente patrones "Paralelo_X" (case-insensitive)
-    y retorna el primer paralelo encontrado.
+    Ahora soporta múltiples formatos:
+    - "Alumnos_Paralelo_01", "Alumnos_Paralelo_02", etc.
+    - "Paralelo_1", "Paralelo_2", etc.
+    - "Paralelo 1", "Paralelo 2", etc.
     
     Args:
-        grupos_str: String con grupos/paralelos (ej: "grupo LAB, Paralelo_3")
+        grupos_str: String con grupos/paralelos
         
     Returns:
-        str: Nombre del paralelo encontrado o "Sin_paralelo" si no se encuentra
+        str: Nombre del paralelo encontrado o "Sin_paralelo"
         
     Example:
-        >>> extraer_paralelo("grupo LAB RECUPERATIVO, Paralelo_3")
+        >>> extraer_paralelo("Alumnos_Paralelo_03")
         'Paralelo_3'
-        >>> extraer_paralelo("Paralelo_1, grupo TEORICO")
+        >>> extraer_paralelo("Paralelo_1, grupo LAB")
         'Paralelo_1'
-        >>> extraer_paralelo("solo grupo practico")
-        'Sin_paralelo'
-        
-    Note:
-        - Busca patrones que comiencen con "Paralelo_" (case-insensitive)
-        - Retorna "Sin_paralelo" para valores vacíos, nulos o sin paralelo
-        - Solo extrae el primer paralelo encontrado si hay múltiples
+        >>> extraer_paralelo("Alumnos_Paralelo_15")
+        'Paralelo_15'
     """
-    if grupos_str is None: # pyright: ignore[reportUnnecessaryComparison]
-        return "Sin_paralelo"
-    
     try:
-        grupos_clean = str(grupos_str).strip()
+        grupos_clean = grupos_str.strip()
         if not grupos_clean:
             return "Sin_paralelo"
             
-        # Buscar patrones Paralelo_X (case-insensitive)
-        match = re.search(r'(paralelo[\s_]*\d+)', grupos_clean, re.IGNORECASE)
-        if match:
-            paralelo = match.group(1).replace(' ', '_')  # Normalizar espacios
-            return paralelo.title()  # Paralelo_3 en lugar de paralelo_3
+        # Patrón para "Alumnos_Paralelo_01", "Alumnos_Paralelo_02", etc.
+        match_alumnos = re.search(r'alumnos_paralelo_?(\d+)', grupos_clean, re.IGNORECASE)
+        if match_alumnos:
+            numero = match_alumnos.group(1)
+            # Remover ceros a la izquierda: "01" -> "1", "10" -> "10"
+            numero_sin_ceros = str(int(numero))
+            return f"Paralelo_{numero_sin_ceros}"
+            
+        # Patrón original para "Paralelo_X", "Paralelo X"
+        match_paralelo = re.search(r'paralelo[\s_]*(\d+)', grupos_clean, re.IGNORECASE)
+        if match_paralelo:
+            numero = match_paralelo.group(1)
+            numero_sin_ceros = str(int(numero))  # Normalizar "01" a "1"
+            return f"Paralelo_{numero_sin_ceros}"
+            
         return "Sin_paralelo"
     except Exception as e:
         logger.debug(f"Error extrayendo paralelo de '{grupos_str}': {e}")
@@ -127,7 +130,7 @@ def limpiar_bd(tx: ManagedTransaction) -> None:
     Example:
         >>> with driver.session() as session:
         ...     session.execute_write(limpiar_bd)
-        🗑️ Base de datos limpiada: 150 nodos eliminados
+        Base de datos limpiada: 150 nodos eliminados
         
     Note:
         - Operación irreversible
@@ -137,9 +140,9 @@ def limpiar_bd(tx: ManagedTransaction) -> None:
     try:
         result = tx.run("MATCH (n) DETACH DELETE n")
         summary = result.consume()
-        logger.info(f"🗑️ Base de datos limpiada: {summary.counters.nodes_deleted} nodos eliminados")
+        logger.info(f"Base de datos limpiada: {summary.counters.nodes_deleted} nodos eliminados")
     except Exception as e:
-        logger.error(f"❌ Error limpiando la base de datos: {e}")
+        logger.error(f"Error limpiando la base de datos: {e}")
         raise
 
 
@@ -187,7 +190,7 @@ def insertar_alumno(tx: ManagedTransaction, alumnos: DataFrame) -> None:
         ... })
         >>> with driver.session() as session:
         ...     session.execute_write(insertar_alumno, df)
-        ✅ Inserción de alumnos completada: 2 insertados, 0 errores
+        Inserción de alumnos completada: 2 insertados, 0 errores
         
     Note:
         - Los correos se convierten a minúsculas automáticamente
@@ -200,18 +203,18 @@ def insertar_alumno(tx: ManagedTransaction, alumnos: DataFrame) -> None:
     missing_columns = [col for col in required_columns if col not in alumnos.columns]
     
     if missing_columns:
-        error_msg = f"❌ Faltan columnas requeridas en el DataFrame: {missing_columns}"
+        error_msg = f"Faltan columnas requeridas en el DataFrame: {missing_columns}"
         logger.error(error_msg)
         raise ValueError(error_msg)
     
     if alumnos.empty:
-        logger.warning("⚠️ DataFrame de alumnos está vacío")
+        logger.warning("DataFrame de alumnos está vacío")
         return
 
     # Verificar si existe columna Grupos
     tiene_grupos = 'Grupos' in alumnos.columns
     if not tiene_grupos:
-        logger.warning("⚠️ Columna 'Grupos' no encontrada - Los alumnos se crearán sin paralelo")
+        logger.warning("Columna 'Grupos' no encontrada - Los alumnos se crearán sin paralelo")
 
     alumnos_insertados = 0
     errores = 0
@@ -226,7 +229,7 @@ def insertar_alumno(tx: ManagedTransaction, alumnos: DataFrame) -> None:
             
             # Validar correo electrónico
             if correo_raw is None or not str(correo_raw).strip():
-                logger.warning(f"⚠️ Fila {index}: Correo vacío o inválido, omitiendo")
+                logger.warning(f"Fila {index}: Correo vacío o inválido, omitiendo")
                 errores += 1
                 continue
                 
@@ -234,7 +237,7 @@ def insertar_alumno(tx: ManagedTransaction, alumnos: DataFrame) -> None:
             
             # Validar que tengamos nombre y correo
             if not nombre or not apellidos or not correo:
-                logger.warning(f"⚠️ Fila {index}: Datos incompletos, omitiendo")
+                logger.warning(f"Fila {index}: Datos incompletos, omitiendo")
                 errores += 1
                 continue
 
@@ -268,22 +271,22 @@ def insertar_alumno(tx: ManagedTransaction, alumnos: DataFrame) -> None:
             if record:
                 correo_insertado: str = record["correo"]
                 paralelo_asignado: str = record["paralelo"]
-                logger.debug(f"✅ Alumno procesado: {correo_insertado} -> {paralelo_asignado}")
+                logger.debug(f"Alumno procesado: {correo_insertado} -> {paralelo_asignado}")
                 alumnos_insertados += 1
             else:
-                logger.warning(f"⚠️ Fila {index}: No se pudo verificar la inserción del alumno")
+                logger.warning(f"Fila {index}: No se pudo verificar la inserción del alumno")
                 errores += 1
 
         except Exception as e:
-            logger.error(f"❌ Error insertando alumno en fila {index}: {e}")
+            logger.error(f"Error insertando alumno en fila {index}: {e}")
             errores += 1
             # Continuar con el siguiente alumno en lugar de fallar completamente
             continue
 
     # Reporte final detallado
-    logger.info(f"✅ Inserción de alumnos completada: {alumnos_insertados} insertados, {errores} errores")
+    logger.info(f"Inserción de alumnos completada: {alumnos_insertados} insertados, {errores} errores")
     if tiene_grupos and alumnos_sin_paralelo > 0:
-        logger.info(f"📊 {alumnos_sin_paralelo} alumnos fueron asignados a 'Sin_paralelo'")
+        logger.info(f"{alumnos_sin_paralelo} alumnos fueron asignados a 'Sin_paralelo'")
 
 
 # ==========================
@@ -322,7 +325,7 @@ def contar_alumnos(tx: ManagedTransaction) -> int:
             return total
         return 0
     except Exception as e:
-        logger.error(f"❌ Error contando alumnos: {e}")
+        logger.error(f"Error contando alumnos: {e}")
         return 0
 
 
@@ -376,7 +379,7 @@ def buscar_alumno_por_correo(tx: ManagedTransaction, correo: str) -> Dict[str, A
             }
         return {}
     except Exception as e:
-        logger.error(f"❌ Error buscando alumno {correo}: {e}")
+        logger.error(f"Error buscando alumno {correo}: {e}")
         return {}
 
 
@@ -421,9 +424,9 @@ def contar_alumnos_por_paralelo(tx: ManagedTransaction) -> Dict[str, int]:
             total: int = record["total"]
             distribucion[paralelo] = total
             
-        logger.info(f"📊 Distribución de alumnos por paralelo: {distribucion}")
+        logger.info(f"Distribución de alumnos por paralelo: {distribucion}")
         return distribucion
         
     except Exception as e:
-        logger.error(f"❌ Error contando alumnos por paralelo: {e}")
+        logger.error(f"Error contando alumnos por paralelo: {e}")
         return {}

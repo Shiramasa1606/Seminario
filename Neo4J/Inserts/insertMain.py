@@ -26,6 +26,7 @@ Estructura de datos manejada:
 """
 
 import os
+import logging
 from pathlib import Path
 from typing import List, Dict, Any
 import pandas as pd
@@ -40,7 +41,7 @@ from Neo4J.conn import obtener_driver
 from Neo4J.Inserts.insertarAlumnos import insertar_alumno, limpiar_bd
 from Neo4J.Inserts.insertarMaterial import procesar_unidades_y_raps
 from Neo4J.Inserts.insertarCuestionariosAyudantias import procesar_cuestionarios_y_ayudantias
-from Neo4J.Inserts.Relaciones.relacionarAlumnos import procesar_unidades as relacionar_alumnos
+from Neo4J.Inserts.Relaciones.relacionarAlumnos import relacionar_alumnos
 from Neo4J.Inserts.Relaciones.relacionarMaterial import procesar_relaciones as validar_relaciones_material
 
 # ==========================
@@ -54,6 +55,7 @@ BASE_PATH: Path = Path(BASE_PATH_STR)
 if not BASE_PATH.exists():
     raise FileNotFoundError(f"❌ BASE_PATH no existe: {BASE_PATH}")
 
+logger = logging.getLogger(__name__)
 
 # ==========================
 # Funciones para estadísticas
@@ -285,6 +287,84 @@ def limpiar_bd_con_driver(driver: Driver) -> None:
 # Función principal
 # ==========================
 
+def obtener_archivos_alumnos(base_path: Path) -> List[Path]:
+    """
+    Detecta automáticamente todos los archivos de alumnos en la carpeta Alumnos.
+    PRIORIZA archivos .csv sobre .xlsx para evitar duplicados.
+    
+    Args:
+        base_path: Ruta base del proyecto
+        
+    Returns:
+        List[Path]: Lista de rutas a archivos de alumnos encontrados, sin duplicados
+    """
+    alumnos_path = base_path / "Alumnos"
+    
+    if not alumnos_path.exists():
+        print(f"❌ Carpeta de alumnos no encontrada: {alumnos_path}")
+        return []
+    
+    # Buscar todos los archivos que coincidan con patrones de alumnos
+    patrones = [
+        "Alumnos_Paralelo_*",
+        "Alumnos_*",
+        "Estudiantes_*"
+    ]
+    
+    todos_archivos: List[Path] = []
+    for patron in patrones:
+        archivos = list(alumnos_path.glob(patron))
+        todos_archivos.extend(archivos)
+    
+    # Agrupar por "grupo de paralelo" (mismo nombre base, diferentes extensiones)
+    archivos_por_grupo: dict[str, List[Path]] = {}
+    
+    for archivo in todos_archivos:
+        # Extraer el nombre base sin extensión (ej: "Alumnos_Paralelo_01")
+        nombre_base = archivo.stem
+        
+        # Si es el primer archivo de este grupo, inicializar
+        if nombre_base not in archivos_por_grupo:
+            archivos_por_grupo[nombre_base] = []
+        
+        archivos_por_grupo[nombre_base].append(archivo)
+    
+    # Seleccionar solo 1 archivo por grupo, priorizando CSV
+    archivos_finales: List[Path] = []
+    
+    for nombre_base, archivos_grupo in archivos_por_grupo.items():
+        # Separar por extensión
+        archivos_csv = [a for a in archivos_grupo if a.suffix.lower() == '.csv']
+        archivos_xlsx = [a for a in archivos_grupo if a.suffix.lower() == '.xlsx']
+        otros_archivos = [a for a in archivos_grupo if a.suffix.lower() not in ['.csv', '.xlsx']]
+        
+        # PRIORIDAD: CSV > XLSX > Otros
+        archivo_elegido: Path
+        if archivos_csv:
+            archivo_elegido = archivos_csv[0]  # Tomar el primer CSV
+            if len(archivos_csv) > 1:
+                print(f"⚠️ Múltiples CSV para {nombre_base}, usando: {archivo_elegido.name}")
+        elif archivos_xlsx:
+            archivo_elegido = archivos_xlsx[0]  # Tomar el primer XLSX
+            print(f"📊 Usando Excel para {nombre_base} (no hay CSV)")
+        elif otros_archivos:
+            archivo_elegido = otros_archivos[0]  # Tomar el primer de otros formatos
+            print(f"⚠️ Formato no preferido para {nombre_base}: {archivo_elegido.name}")
+        else:
+            continue  # No debería pasar
+            
+        archivos_finales.append(archivo_elegido)
+    
+    # Ordenar alfabéticamente
+    archivos_finales.sort()
+    
+    print(f"📁 Encontrados {len(archivos_finales)} archivos únicos de alumnos:")
+    for archivo in archivos_finales:
+        print(f"   ✅ {archivo.name}")
+        
+    return archivos_finales
+
+
 def rellenarGrafo() -> None:
     """
     Función principal que ejecuta el proceso completo de población del grafo Neo4J.
@@ -329,19 +409,22 @@ def rellenarGrafo() -> None:
         estadisticas_iniciales = obtener_estadisticas_bd(driver)
         
         # --------------------------
-        # FASE 2: LIMPIEZA DE BASE DE DATOS
+        # FASE 2: LIMPIEZA COMPLETA DE BASE DE DATOS
         # --------------------------
         print("\n🧹 LIMPIANDO BASE DE DATOS...")
         limpiar_bd_con_driver(driver)
 
         # --------------------------
-        # FASE 3: INSERCIÓN DE ALUMNOS
+        # FASE 3: INSERCIÓN DE ALUMNOS (AUTOMÁTICA)
         # --------------------------
-        print("\n👥 INSERTANDO ALUMNOS...")
-        rutas_csv: List[Path] = [
-            BASE_PATH / "Alumnos" / "Alumnos_Paralelo_03.csv",
-        ]
-        total_alumnos_procesados = procesar_alumnos_con_driver(driver, rutas_csv)
+        print("\n👥 DETECTANDO E INSERTANDO ALUMNOS...")
+        rutas_alumnos = obtener_archivos_alumnos(BASE_PATH)
+        
+        if not rutas_alumnos:
+            print("❌ No se encontraron archivos de alumnos")
+            return
+            
+        total_alumnos_procesados = procesar_alumnos_con_driver(driver, rutas_alumnos)
         print(f"✅ Total alumnos procesados: {total_alumnos_procesados}")
 
         # --------------------------
@@ -423,3 +506,10 @@ def mostrar_estadisticas_rapidas() -> None:
             
     finally:
         driver.close()
+
+
+# ==========================
+# Punto de entrada principal
+# ==========================
+if __name__ == "__main__":
+    rellenarGrafo()

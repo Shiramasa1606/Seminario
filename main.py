@@ -29,7 +29,6 @@ from Neo4J.consultar import (
 )
 from Neo4J.neo_queries import (
     fetch_actividades_lentas_alumno,
-    fetch_alumnos,
     fetch_estadisticas_alumno,
     fetch_estadisticas_globales,
     fetch_progreso_alumno,
@@ -52,27 +51,97 @@ def limpiar_consola() -> None:
 
 def mostrar_menu_principal() -> str:
     """Muestra el menú principal y retorna la opción seleccionada."""
-    print("\n" + "="*40)
-    print("🎯 SISTEMA DE RECOMENDACIÓN DE APRENDIZAJE")
-    print("="*40)
-    print("1. Ejecutar inserción de datos (rellenar grafo)")
-    print("2. Consultar alumnos y progreso")
-    print("3. 📊 Estadísticas de Paralelo")
-    print("4. 📈 Estadísticas del Sistema")
-    print("0. Salir")
-    return input("\nSeleccione una opción: ").strip()
+    print("\n" + "="*50)
+    print("🎓 SISTEMA DE RECOMENDACIÓN DE APRENDIZAJE 🎓")
+    print("="*50)
+    print("📊 1. Ejecutar inserción de datos (rellenar grafo)")
+    print("👨‍🎓 2. Consultar alumnos y progreso")
+    print("🏫 3. Estadísticas de Paralelo")
+    print("📈 4. Estadísticas del Sistema")
+    print("🚪 0. Salir")
+    return input("\n🎯 Seleccione una opción: ").strip()
 
 
 def mostrar_menu_alumno(nombre: str) -> str:
     """Muestra el menú específico para un alumno."""
-    print(f"\n=== Alumno: {nombre} ===")
-    print("1. 📊 Ver progreso")
-    print("2. 🎯 Siguiente actividad recomendada")
-    print("3. 🗺️ Roadmap completo")
-    print("4. 📈 Análisis avanzado (disponible para todos)")
-    print("0. ↩️ Volver al menú principal")
-    return input("\nSeleccione una opción: ").strip()
+    print(f"\n⭐ ALUMNO: {nombre} ⭐")
+    print("="*40)
+    print("📊 1. Ver progreso")
+    print("🎯 2. Siguiente actividad recomendada")
+    print("🗺️  3. Roadmap completo")
+    print("🔍 4. Análisis avanzado")
+    print("↩️  0. Volver al menú principal")
+    return input("\n🎯 Seleccione una opción: ").strip()
 
+def _manejar_seleccion_alumno_por_paralelo(paralelo: str) -> None:
+    """
+    Maneja la selección de alumnos filtrados por paralelo específico.
+    
+    Args:
+        paralelo: Nombre del paralelo seleccionado
+    """
+    from Neo4J.neo_queries import fetch_alumnos_por_paralelo
+    
+    # Obtener alumnos del paralelo específico
+    alumnos_data = fetch_alumnos_por_paralelo(paralelo)
+    if not alumnos_data:
+        print(f"❌ No hay alumnos registrados en el paralelo {paralelo}")
+        input("\n⏎ Presione Enter para continuar...")
+        return
+
+    # Preparar datos para selección
+    alumnos_nombres = [alumno["nombre"] for alumno in alumnos_data]
+    alumno_map = {alumno["nombre"]: alumno["correo"] for alumno in alumnos_data}
+
+    while True:
+        limpiar_consola()
+        print(f"\n👥 ALUMNOS DEL PARALELO")
+        print("=" * 50)
+        print(f"🏫 Paralelo: {paralelo}")
+        print(f"📊 Total alumnos: {len(alumnos_nombres)}")
+        print("\n↩️  0. Volver a selección de paralelo")
+        
+        for idx, nombre in enumerate(alumnos_nombres, start=1):
+            print(f"{idx}. 👤 {nombre}")
+
+        try:
+            seleccion = int(input(f"\n🎯 Seleccione un alumno (0-{len(alumnos_nombres)}): ").strip())
+        except ValueError:
+            print("❌ Ingrese un número válido")
+            input("\n⏎ Presione Enter para continuar...")
+            continue
+
+        if seleccion == 0:
+            break
+        elif 1 <= seleccion <= len(alumnos_nombres):
+            alumno_nombre = alumnos_nombres[seleccion - 1]
+            alumno_correo = alumno_map[alumno_nombre]
+
+            while True:
+                limpiar_consola()
+                print(f"\n⭐ ALUMNO: {alumno_nombre}")
+                print(f"🏫 Paralelo: {paralelo}")
+                print("=" * 50)
+                opcion_alumno = mostrar_menu_alumno(alumno_nombre)
+
+                if opcion_alumno == "1":
+                    ver_progreso_alumno(alumno_correo)
+                elif opcion_alumno == "2":
+                    ver_siguiente_actividad_alumno(alumno_correo)
+                elif opcion_alumno == "3":
+                    ver_roadmap_alumno(alumno_correo)
+                elif opcion_alumno == "4":
+                    ver_analisis_avanzado_alumno(alumno_correo)
+                elif opcion_alumno == "0":
+                    break
+                else:
+                    print("❌ Opción no válida")
+
+                input("\n⏎ Presione Enter para continuar...")
+
+        else:
+            print(f"❌ Ingrese un número entre 0 y {len(alumnos_nombres)}")
+            input("\n⏎ Presione Enter para continuar...")
 
 # ============================================================
 # Funciones de Análisis y Presentación de Datos
@@ -110,7 +179,7 @@ def _obtener_datos_analisis_detallado(analisis: Dict[str, Any]) -> List[Dict[str
         if diferencia < -10:
             actividad_data["mensaje_eficiencia"] = f"🚀 Eres {abs(diferencia):.1f}% más rápido que el promedio"
         elif diferencia > 10:
-            actividad_data["mensaje_eficiencia"] = f"⏰ Estás {diferencia:.1f}% más lento que el promedio"
+            actividad_data["mensaje_eficiencia"] = f"🐢 Estás {diferencia:.1f}% más lento que el promedio"
         else:
             actividad_data["mensaje_eficiencia"] = "📊 Tu tiempo está en el promedio"
         
@@ -132,22 +201,29 @@ def _obtener_datos_analisis_detallado(analisis: Dict[str, Any]) -> List[Dict[str
 
 def _mostrar_analisis_detallado(analisis: Dict[str, Any]) -> None:
     """Muestra el análisis detallado actividad por actividad con formato visual."""
-    print(f"\n" + "📈 ANÁLISIS DETALLADO POR ACTIVIDAD")
+    print(f"\n🔍 ANÁLISIS DETALLADO POR ACTIVIDAD")
     print("=" * 70)
     
     actividades_data = _obtener_datos_analisis_detallado(analisis)
     
     for actividad in actividades_data:
-        print(f"\n📚 {actividad['nombre']} ({actividad['tipo']})")
-        print(f"   Puntaje: {actividad['puntaje']}% - Intentos: {actividad['intentos']}")
-        print(f"   Tu tiempo promedio: {formatear_tiempo_analisis(actividad['tiempo_promedio'])}")
+        # Emoji según tipo de actividad
+        tipo_emoji = "❓"
+        if "cuestionario" in actividad['tipo'].lower():
+            tipo_emoji = "📝"
+        elif "ayudantía" in actividad['tipo'].lower() or "ayudantia" in actividad['tipo'].lower():
+            tipo_emoji = "👨‍🏫"
+        
+        print(f"\n{tipo_emoji} {actividad['nombre']} ({actividad['tipo']})")
+        print(f"   🎯 Puntaje: {actividad['puntaje']}% - 🔄 Intentos: {actividad['intentos']}")
+        print(f"   ⏱️  Tu tiempo promedio: {formatear_tiempo_analisis(actividad['tiempo_promedio'])}")
         
         if actividad['tiempo_grupo'] is not None:
-            print(f"   Tiempo promedio del grupo: {formatear_tiempo_analisis(actividad['tiempo_grupo'])}")
+            print(f"   📊 Tiempo promedio del grupo: {formatear_tiempo_analisis(actividad['tiempo_grupo'])}")
             print(f"   {actividad['mensaje_eficiencia']}")
             
             if actividad['emoji_eficiencia'] and actividad['categoria_eficiencia']:
-                print(f"   {actividad['emoji_eficiencia']} Categoría: {actividad['categoria_eficiencia'].replace('_', ' ').title()}")
+                print(f"   🏷️  Categoría: {actividad['categoria_eficiencia'].replace('_', ' ').title()} {actividad['emoji_eficiencia']}")
 
 
 def _obtener_resumen_analisis(analisis: Dict[str, Any]) -> Dict[str, Any]:
@@ -200,15 +276,15 @@ def _mostrar_resumen_analisis(analisis: Dict[str, Any]) -> None:
     resumen = _obtener_resumen_analisis(analisis)
     
     if not resumen:
-        print("📊 No hay datos suficientes para generar resumen")
+        print("❌ No hay datos suficientes para generar resumen")
         return
     
-    print(f"\n🎯 RESUMEN EJECUTIVO DEL ANÁLISIS")
+    print(f"\n📊 RESUMEN EJECUTIVO DEL ANÁLISIS")
     print("=" * 50)
-    print(f"📈 Total de actividades analizadas: {resumen['total_actividades']}")
-    print(f"✅ Eficientes: {resumen['actividades_eficientes']} actividades")
+    print(f"📦 Total de actividades analizadas: {resumen['total_actividades']}")
+    print(f"🚀 Eficientes: {resumen['actividades_eficientes']} actividades")
     print(f"📊 En promedio: {resumen['actividades_promedio']} actividades") 
-    print(f"⏰ Necesitan mejora: {resumen['actividades_lentas']} actividades")
+    print(f"🐢 Necesitan mejora: {resumen['actividades_lentas']} actividades")
     
     if resumen['actividades_mas_lentas']:
         print(f"\n🔴 TOP 3 ACTIVIDADES QUE NECESITAN MÁS ATENCIÓN:")
@@ -234,10 +310,10 @@ def ver_progreso_alumno(correo: str) -> None:
     """
     progreso = fetch_progreso_alumno(correo)
     if not progreso:
-        print("⚠️ No hay progreso registrado para este alumno")
+        print("❌ No hay progreso registrado para este alumno")
         return
     
-    print("\n" + "📊 PROGRESO DEL ALUMNO")
+    print("\n📊 PROGRESO DEL ALUMNO")
     print("=" * 60)
     
     # Estadísticas rápidas
@@ -247,23 +323,23 @@ def ver_progreso_alumno(correo: str) -> None:
     perfectos = len([p for p in progreso if p.get("estado") == "Perfecto"])
     
     print(f"📈 Resumen General:")
-    print(f"   • 🔄 Intentos: {intentos}")
-    print(f"   • ✅ Completados: {completados}")
-    print(f"   • 🏆 Perfectos: {perfectos}")
-    print(f"   • 📊 Total actividades: {total_actividades}")
+    print(f"   🔄 Intentos: {intentos}")
+    print(f"   ✅ Completados: {completados}")
+    print(f"   🏆 Perfectos: {perfectos}")
+    print(f"   📦 Total actividades: {total_actividades}")
     
     if total_actividades > 0:
         porcentaje_completado = ((completados + perfectos) / total_actividades) * 100
-        print(f"   • 🎯 Progreso general: {porcentaje_completado:.1f}%")
+        print(f"   📊 Progreso general: {porcentaje_completado:.1f}%")
     
     # Agrupar actividades por estado
     actividades_por_estado: Dict[str, List[Dict[str, Any]]] = {
-        "🔄 EN PROGRESO": [p for p in progreso if p.get("estado") == "Intento"],
-        "✅ COMPLETADAS": [p for p in progreso if p.get("estado") == "Completado"],
+        "🟡 EN PROGRESO": [p for p in progreso if p.get("estado") == "Intento"],
+        "🟢 COMPLETADAS": [p for p in progreso if p.get("estado") == "Completado"],
         "🏆 PERFECTAS": [p for p in progreso if p.get("estado") == "Perfecto"]
     }
     
-    print("\n" + "📋 DETALLE AGRUPADO POR ESTADO")
+    print("\n📋 DETALLE AGRUPADO POR ESTADO")
     print("=" * 60)
     
     for estado, actividades in actividades_por_estado.items():
@@ -280,23 +356,26 @@ def ver_progreso_alumno(correo: str) -> None:
                 actividades_agrupadas_por_tipo[tipo_act].append(actividad)
             
             for tipo_act, lista_act in actividades_agrupadas_por_tipo.items():
-                print(f"  📚 {tipo_act} ({len(lista_act)}):")
+                # Emoji según tipo de actividad
+                tipo_emoji = "📝" if "cuestionario" in tipo_act.lower() else "👨‍🏫" if "ayudantía" in tipo_act.lower() or "ayudantia" in tipo_act.lower() else "📚"
+                
+                print(f"  {tipo_emoji} {tipo_act} ({len(lista_act)}):")
                 for act in lista_act:
                     nombre_act: str = str(act.get('nombre', 'Sin nombre'))
                     # Mostrar información adicional si está disponible
                     info_extra = ""
                     if act.get('score'):
                         score_val = act.get('score')
-                        info_extra = f" - Puntaje: {score_val}%"
+                        info_extra = f" - 🎯 Puntaje: {score_val}%"
                     elif act.get('duration_seconds'):
                         duration_val = act.get('duration_seconds', 0)
                         minutos: int = int(duration_val) // 60
-                        info_extra = f" - Tiempo: {minutos}min"
+                        info_extra = f" - ⏱️ Tiempo: {minutos}min"
                     
                     print(f"     • {nombre_act}{info_extra}")
     
     # Resumen por tipo de actividad
-    print("\n" + "🎯 RESUMEN POR TIPO DE ACTIVIDAD")
+    print("\n📊 RESUMEN POR TIPO DE ACTIVIDAD")
     print("-" * 40)
     
     resumen_por_tipo: Dict[str, Dict[str, int]] = {}
@@ -315,8 +394,10 @@ def ver_progreso_alumno(correo: str) -> None:
             resumen_por_tipo[tipo_act]['perfectos'] += 1
     
     for tipo_act, estadisticas in resumen_por_tipo.items():
-        print(f"  📖 {tipo_act}:")
-        print(f"     • Total: {estadisticas['total']}")
+        tipo_emoji = "📝" if "cuestionario" in tipo_act.lower() else "👨‍🏫" if "ayudantía" in tipo_act.lower() or "ayudantia" in tipo_act.lower() else "📚"
+        
+        print(f"  {tipo_emoji} {tipo_act}:")
+        print(f"     • 📦 Total: {estadisticas['total']}")
         if estadisticas['intentos'] > 0:
             print(f"     • 🔄 En progreso: {estadisticas['intentos']}")
         if estadisticas['completados'] > 0:
@@ -334,24 +415,24 @@ def ver_siguiente_actividad_alumno(correo: str) -> None:
     """
     progreso = fetch_progreso_alumno(correo)
     if not progreso:
-        print("⚠️ No hay progreso registrado para este alumno")
+        print("❌ No hay progreso registrado para este alumno")
         siguiente = fetch_siguiente_actividad(correo)
         if siguiente:
-            print(f"\n🎯 **RECOMENDACIÓN PARA COMENZAR:**")
-            print(f"   • 📚 Comienza con: '{siguiente.get('nombre')}'")
-            print(f"   • 💡 Es tu primera actividad en el sistema")
-            print(f"   • 🎯 Objetivo: Familiarizarte con la plataforma")
+            print(f"\n🎯 RECOMENDACIÓN PARA COMENZAR:")
+            print(f"   🚀 Comienza con: '{siguiente.get('nombre')}'")
+            print(f"   📍 Es tu primera actividad en el sistema")
+            print(f"   🎯 Objetivo: Familiarizarte con la plataforma")
         return
     
     sugerencia = recomendar_siguiente_from_progress(progreso)
     if not sugerencia:
-        print("🎉 **¡FELICITACIONES!**")
+        print("🎉 ¡FELICITACIONES!")
         print("=" * 50)
-        print("🏆 **Has alcanzado un logro importante:**")
+        print("🏆 Has alcanzado un logro importante:")
         print("   • ✅ Todas las actividades están completadas o en estado perfecto")
         print("   • 📚 Has dominado el material disponible")
         print("   • 🎯 Objetivo cumplido: Aprendizaje completo")
-        print(f"\n💡 **Próximos pasos sugeridos:**")
+        print(f"\n📋 Próximos pasos sugeridos:")
         print("   • 🔄 Repasar temas que necesites reforzar")
         print("   • ⏳ Esperar nuevas actividades del profesor")
         print("   • 📊 Revisar tu progreso para mantener el nivel")
@@ -360,75 +441,79 @@ def ver_siguiente_actividad_alumno(correo: str) -> None:
     act = sugerencia['actividad']
     estrategia = sugerencia['estrategia']
     
-    print("\n" + "🎯 SIGUIENTE ACTIVIDAD RECOMENDADA")
+    print("\n🎯 SIGUIENTE ACTIVIDAD RECOMENDADA")
     print("=" * 60)
     
     # Configuración visual según estrategia
     estrategia_config = {
-        "refuerzo": ("🔄", "REFUERZO - TERMINAR ACTIVIDAD PENDIENTE"),
-        "mejora": ("📈", "MEJORA - BUSCAR LA PERFECCIÓN"), 
-        "nuevas": ("🚀", "NUEVO DESAFÍO"),
-        "inicio": ("🎯", "INICIO - COMENZAR EL APRENDIZAJE")
-    }.get(estrategia, ("📌", estrategia.upper()))
+        "refuerzo": ("🔄 REFUERZO - TERMINAR ACTIVIDAD PENDIENTE", "🟡"),
+        "mejora": ("⭐ MEJORA - BUSCAR LA PERFECCIÓN", "🟠"), 
+        "nuevas": ("🚀 NUEVO DESAFÍO", "🔵"),
+        "inicio": ("🎯 INICIO - COMENZAR EL APRENDIZAJE", "🟢")
+    }.get(estrategia, (estrategia.upper(), "📌"))
     
-    emoji, titulo = estrategia_config
+    titulo, emoji_estrategia = estrategia_config
     
-    print(f"{emoji} {titulo}")
+    print(f"{emoji_estrategia} {titulo}")
     print("-" * 50)
-    print(f"📚 Tipo: {act.get('tipo', 'Desconocido')}")
+    
+    # Emoji según tipo de actividad
+    tipo_emoji = "📝" if "cuestionario" in str(act.get('tipo', '')).lower() else "👨‍🏫" if "ayudantía" in str(act.get('tipo', '')).lower() or "ayudantia" in str(act.get('tipo', '')).lower() else "📚"
+    
+    print(f"{tipo_emoji} Tipo: {act.get('tipo', 'Desconocido')}")
     print(f"📖 Actividad: {act.get('nombre', 'Sin nombre')}")
     
     # Mensajes específicos según estrategia
     if estrategia == "refuerzo":
-        print(f"\n🔍 **ANÁLISIS DE TU SITUACIÓN:**")
-        print(f"   • 📅 Esta actividad está en estado 'Intento'")
-        print(f"   • ⏰ Es tu actividad más antigua sin completar")
-        print(f"   • 🎯 Necesita tu atención prioritaria")
+        print(f"\n🔍 ANÁLISIS DE TU SITUACIÓN:")
+        print(f"   🟡 Esta actividad está en estado 'Intento'")
+        print(f"   📅 Es tu actividad más antigua sin completar")
+        print(f"   ⚠️  Necesita tu atención prioritaria")
         
-        print(f"\n💡 **PLAN DE ACCIÓN RECOMENDADO:**")
-        print(f"   • 1️⃣ **Revisa el material**: Consulta los RAPs relacionados")
-        print(f"   • 2️⃣ **Identifica dificultades**: ¿Qué conceptos te causan problemas?")
-        print(f"   • 3️⃣ **Practica**: Resuelve ejercicios similares")
-        print(f"   • 4️⃣ **Reintenta**: Completa la actividad al 100%")
+        print(f"\n📋 PLAN DE ACCIÓN RECOMENDADO:")
+        print(f"   📚 1. Revisa el material: Consulta los RAPs relacionados")
+        print(f"   🔍 2. Identifica dificultades: ¿Qué conceptos te causan problemas?")
+        print(f"   💪 3. Practica: Resuelve ejercicios similares")
+        print(f"   🎯 4. Reintenta: Completa la actividad al 100%")
         
     elif estrategia == "mejora":
-        print(f"\n🔍 **ANÁLISIS DE TU SITUACIÓN:**")
-        print(f"   • ✅ Esta actividad está 'Completada' pero no 'Perfecta'")
-        print(f"   • 📊 Tienes oportunidad de mejorar tu calificación")
-        print(f"   • 🎯 Estás cerca del dominio total del tema")
+        print(f"\n🔍 ANÁLISIS DE TU SITUACIÓN:")
+        print(f"   🟢 Esta actividad está 'Completada' pero no 'Perfecta'")
+        print(f"   📈 Tienes oportunidad de mejorar tu calificación")
+        print(f"   🎯 Estás cerca del dominio total del tema")
         
-        print(f"\n💡 **PLAN DE ACCIÓN RECOMENDADO:**")
-        print(f"   • 1️⃣ **Revisa errores**: ¿Dónde perdiste puntos?")
-        print(f"   • 2️⃣ **Profundiza**: Estudia los conceptos específicos")
-        print(f"   • 3️⃣ **Practica selectiva**: Enfócate en tus áreas débiles")
-        print(f"   • 4️⃣ **Perfecciona**: Busca el 100% de calificación")
+        print(f"\n📋 PLAN DE ACCIÓN RECOMENDADO:")
+        print(f"   📊 1. Revisa errores: ¿Dónde perdiste puntos?")
+        print(f"   📚 2. Profundiza: Estudia los conceptos específicos")
+        print(f"   🎯 3. Practica selectiva: Enfócate en tus áreas débiles")
+        print(f"   ⭐ 4. Perfecciona: Busca el 100% de calificación")
         
     elif estrategia == "nuevas":
-        print(f"\n🔍 **ANÁLISIS DE TU SITUACIÓN:**")
-        print(f"   • 🏆 Tienes actividades en estado 'Perfecto'")
-        print(f"   • 📚 Demuestras dominio de los temas anteriores")
-        print(f"   • 🚀 Estás listo para nuevos desafíos")
+        print(f"\n🔍 ANÁLISIS DE TU SITUACIÓN:")
+        print(f"   🏆 Tienes actividades en estado 'Perfecto'")
+        print(f"   📚 Demuestras dominio de los temas anteriores")
+        print(f"   🚀 Estás listo para nuevos desafíos")
         
-        print(f"\n💡 **PLAN DE ACCIÓN RECOMENDADO:**")
-        print(f"   • 1️⃣ **Mantén el ritmo**: Sigue con la misma dedicación")
-        print(f"   • 2️⃣ **Aplica conocimiento**: Usa lo aprendido en lo nuevo")
-        print(f"   • 3️⃣ **Conecta conceptos**: Relaciona con temas anteriores")
-        print(f"   • 4️⃣ **Profundiza**: Ve más allá de lo básico")
+        print(f"\n📋 PLAN DE ACCIÓN RECOMENDADO:")
+        print(f"   🔄 1. Mantén el ritmo: Sigue con la misma dedicación")
+        print(f"   🔗 2. Aplica conocimiento: Usa lo aprendido en lo nuevo")
+        print(f"   🧠 3. Conecta conceptos: Relaciona con temas anteriores")
+        print(f"   📈 4. Profundiza: Ve más allá de lo básico")
         
     elif estrategia == "inicio":
-        print(f"\n🔍 **ANÁLISIS DE TU SITUACIÓN:**")
-        print(f"   • 🆕 Estás comenzando tu journey de aprendizaje")
-        print(f"   • 📖 Esta es tu primera actividad recomendada")
-        print(f"   • 🎯 Es el punto de partida ideal")
+        print(f"\n🔍 ANÁLISIS DE TU SITUACIÓN:")
+        print(f"   🎯 Estás comenzando tu journey de aprendizaje")
+        print(f"   🚀 Esta es tu primera actividad recomendada")
+        print(f"   📍 Es el punto de partida ideal")
         
-        print(f"\n💡 **PLAN DE ACCIÓN RECOMENDADO:**")
-        print(f"   • 1️⃣ **Familiarízate**: Conoce la plataforma")
-        print(f"   • 2️⃣ **Establece ritmo**: Encuentra tu horario ideal")
-        print(f"   • 3️⃣ **Consulta material**: Usa los RAPs como guía")
-        print(f"   • 4️⃣ **Avanza progresivamente**: Paso a paso")
+        print(f"\n📋 PLAN DE ACCIÓN RECOMENDADO:")
+        print(f"   🏠 1. Familiarízate: Conoce la plataforma")
+        print(f"   ⏰ 2. Establece ritmo: Encuentra tu horario ideal")
+        print(f"   📚 3. Consulta material: Usa los RAPs como guía")
+        print(f"   🎯 4. Avanza progresivamente: Paso a paso")
     
     # Resumen final motivacional
-    print(f"\n" + "🌟 RESUMEN FINAL" + " 🌟")
+    print(f"\n📊 RESUMEN FINAL")
     print("-" * 30)
     
     total = len(progreso)
@@ -436,16 +521,20 @@ def ver_siguiente_actividad_alumno(correo: str) -> None:
     
     if total > 0:
         progreso_porcentaje = (completados / total) * 100
-        print(f"📊 **Tu progreso general**: {progreso_porcentaje:.1f}%")
+        
+        # Emoji según nivel de progreso
+        progreso_emoji = "🎯" if progreso_porcentaje == 0 else "🚀" if progreso_porcentaje < 50 else "⭐" if progreso_porcentaje < 80 else "🏆"
+        
+        print(f"{progreso_emoji} Tu progreso general: {progreso_porcentaje:.1f}%")
         
         if progreso_porcentaje == 0:
-            print("💪 **¡Comienza hoy mismo! Cada viaje empieza con un primer paso**")
+            print("💪 ¡Comienza hoy mismo! Cada viaje empieza con un primer paso")
         elif progreso_porcentaje < 50:
-            print("🔥 **¡Vas por buen camino! Sigue construyendo tu base**")
+            print("🚀 ¡Vas por buen camino! Sigue construyendo tu base")
         elif progreso_porcentaje < 80:
-            print("⭐ **¡Excelente progreso! La consistencia es tu aliada**")
+            print("⭐ ¡Excelente progreso! La consistencia es tu aliada")
         else:
-            print("🏆 **¡Impresionante! Estás cerca de dominar todo el material**")
+            print("🏆 ¡Impresionante! Estás cerca de dominar todo el material")
 
 
 def ver_roadmap_alumno(correo: str) -> None:
@@ -457,14 +546,14 @@ def ver_roadmap_alumno(correo: str) -> None:
     """
     progreso = fetch_progreso_alumno(correo)
     if not progreso:
-        print("⚠️ No hay progreso registrado para este alumno")
+        print("❌ No hay progreso registrado para este alumno")
         return
     
     # Obtener actividades lentas para análisis de eficiencia
     actividades_lentas = []
     
     try:
-        print("⏳ Analizando eficiencia en tiempo...")
+        print("⏱️ Analizando eficiencia en tiempo...")
         actividades_lentas = fetch_actividades_lentas_alumno(correo)
         
         if actividades_lentas:
@@ -473,7 +562,7 @@ def ver_roadmap_alumno(correo: str) -> None:
             print("✅ Tu ritmo de trabajo está dentro del promedio")
             
     except Exception as e:
-        print(f"⚠️ No se pudieron analizar actividades lentas: {e}")
+        print(f"❌ No se pudieron analizar actividades lentas: {e}")
         actividades_lentas = []
     
     def fetch_next_activity():
@@ -492,23 +581,23 @@ def ver_roadmap_alumno(correo: str) -> None:
         estrategia: str = r["estrategia"]
         estrategias_count[estrategia] = estrategias_count.get(estrategia, 0) + 1
     
-    print("\n" + "🗺️ ROADMAP DE APRENDIZAJE")
+    print("\n🗺️ ROADMAP DE APRENDIZAJE")
     print("=" * 60)
-    print(f"📋 Total de recomendaciones: {len(roadmap)}")
+    print(f"📦 Total de recomendaciones: {len(roadmap)}")
     
     print(f"\n🎯 JERARQUÍA DE PRIORIDADES:")
     print("-" * 30)
     
     estrategias_info = {
-        "refuerzo": ("🔄", "TERMINAR ACTIVIDADES PENDIENTES", estrategias_count.get("refuerzo", 0)),
-        "mejora": ("📈", "MEJORAR CALIFICACIONES", estrategias_count.get("mejora", 0)),
-        "refuerzo_tiempo": ("⏰", "MEJORAR EFICIENCIA", estrategias_count.get("refuerzo_tiempo", 0)),
-        "nuevas": ("🚀", "NUEVOS DESAFÍOS", estrategias_count.get("nuevas", 0))
+        "refuerzo": ("🔄 TERMINAR ACTIVIDADES PENDIENTES", estrategias_count.get("refuerzo", 0)),
+        "mejora": ("⭐ MEJORAR CALIFICACIONES", estrategias_count.get("mejora", 0)),
+        "refuerzo_tiempo": ("⏱️ MEJORAR EFICIENCIA", estrategias_count.get("refuerzo_tiempo", 0)),
+        "nuevas": ("🚀 NUEVOS DESAFÍOS", estrategias_count.get("nuevas", 0))
     }
     
-    for estrategia, (emoji, descripcion, count) in estrategias_info.items():
+    for estrategia, (descripcion, count) in estrategias_info.items():
         if count > 0:
-            print(f"   {emoji} {descripcion}: {count} actividades")
+            print(f"   {descripcion}: {count} actividades")
     
     print("\n" + "=" * 70)
     
@@ -519,30 +608,34 @@ def ver_roadmap_alumno(correo: str) -> None:
         
         # Configuración visual según estrategia
         estrategia_config = {
-            "nuevas": ("🚀", "NUEVO DESAFÍO", "🌟 Comienza un nuevo tema"),
-            "refuerzo": ("🔄", "TERMINAR PENDIENTE", "📝 Completa esta actividad"), 
-            "mejora": ("📈", "BUSCAR PERFECTO", "🎯 Mejora tu calificación"),
-            "refuerzo_tiempo": ("⏰", "MEJORAR EFICIENCIA", "⚡ Optimiza tu tiempo")
-        }.get(estrategia, ("📌", estrategia.upper(), ""))
+            "nuevas": ("🚀 NUEVO DESAFÍO", "Comienza un nuevo tema", "🔵"),
+            "refuerzo": ("🔄 TERMINAR PENDIENTE", "Completa esta actividad", "🟡"), 
+            "mejora": ("⭐ BUSCAR PERFECTO", "Mejora tu calificación", "🟠"),
+            "refuerzo_tiempo": ("⏱️ MEJORAR EFICIENCIA", "Optimiza tu tiempo", "🟣")
+        }.get(estrategia, (estrategia.upper(), "", "📌"))
         
-        emoji, texto_estrategia, descripcion = estrategia_config
+        texto_estrategia, descripcion, color_emoji = estrategia_config
         
-        print(f"\n{i}. {emoji} {texto_estrategia}")
-        print(f"   📚 {act.get('tipo', 'Actividad')}")
+        print(f"\n{color_emoji} {i}. {texto_estrategia}")
+        
+        # Emoji según tipo de actividad
+        tipo_emoji = "📝" if "cuestionario" in str(act.get('tipo', '')).lower() else "👨‍🏫" if "ayudantía" in str(act.get('tipo', '')).lower() or "ayudantia" in str(act.get('tipo', '')).lower() else "📚"
+        
+        print(f"   {tipo_emoji} {act.get('tipo', 'Actividad')}")
         print(f"   📖 {act.get('nombre', 'Sin nombre')}")
         print(f"   💡 {descripcion}")
         
         # Información específica para actividades de mejora de tiempo
         if estrategia == "refuerzo_tiempo" and act.get('diferencia_porcentual'):
-            print(f"   ⏱️  Eficiencia: +{act['diferencia_porcentual']:.1f}% vs promedio")
+            print(f"   📊 Eficiencia: +{act['diferencia_porcentual']:.1f}% vs promedio")
             if act.get('tiempo_promedio_alumno') and act.get('tiempo_promedio_global'):
                 tiempo_alumno = formatear_tiempo_analisis(act['tiempo_promedio_alumno'])
                 tiempo_promedio = formatear_tiempo_analisis(act['tiempo_promedio_global'])
-                print(f"   📊 Tiempos: Tú: {tiempo_alumno} | Promedio: {tiempo_promedio}")
+                print(f"   ⏱️ Tiempos: Tú: {tiempo_alumno} | Promedio: {tiempo_promedio}")
         
         # Mostrar motivo específico si está disponible
         if r.get('motivo'):
-            print(f"   🎯 {r['motivo']}")
+            print(f"   📌 {r['motivo']}")
         
         # Línea separadora cada 3 actividades para mejor legibilidad
         if i % 3 == 0 and i < len(roadmap):
@@ -556,14 +649,14 @@ def ver_analisis_avanzado_alumno(correo: str) -> None:
     Args:
         correo: Correo electrónico del alumno
     """
-    print("\n" + "📊 ANÁLISIS AVANZADO DE RENDIMIENTO")
+    print("\n🔍 ANÁLISIS AVANZADO DE RENDIMIENTO")
     print("=" * 60)
-    print("⏳ Analizando tu desempeño comparado con el grupo...")
+    print("📊 Analizando tu desempeño comparado con el grupo...")
     
     # Obtener progreso del alumno para mostrar estado actual
     progreso = fetch_progreso_alumno(correo)
     if not progreso:
-        print("⚠️ No hay progreso registrado para este alumno")
+        print("❌ No hay progreso registrado para este alumno")
         return
     
     # Mostrar estado actual del alumno
@@ -574,14 +667,14 @@ def ver_analisis_avanzado_alumno(correo: str) -> None:
     
     print(f"\n📈 TU ESTADO ACTUAL:")
     print("-" * 25)
-    print(f"• 📊 Actividades totales: {total_actividades}")
-    print(f"• 🔄 En progreso: {intentos}")
-    print(f"• ✅ Completadas: {completados}")
-    print(f"• 🏆 Perfectas: {perfectos}")
+    print(f"📦 Actividades totales: {total_actividades}")
+    print(f"🟡 En progreso: {intentos}")
+    print(f"🟢 Completadas: {completados}")
+    print(f"🏆 Perfectas: {perfectos}")
     
     if total_actividades > 0:
         progreso_porcentaje = ((completados + perfectos) / total_actividades) * 100
-        print(f"• 📈 Progreso general: {progreso_porcentaje:.1f}%")
+        print(f"📊 Progreso general: {progreso_porcentaje:.1f}%")
     
     # Realizar análisis según el estado del alumno
     analisis: Dict[str, Any] = {}
@@ -589,7 +682,7 @@ def ver_analisis_avanzado_alumno(correo: str) -> None:
     
     if tiene_todo_perfecto:
         print(f"\n🎉 ¡FELICITACIONES! Tienes todas las actividades en estado 'Perfecto'")
-        print("📊 Procediendo con análisis comparativo completo...")
+        print("📈 Procediendo con análisis comparativo completo...")
         analisis = analizar_rendimiento_comparativo(
             correo,
             fetch_verificar_alumno_perfecto,
@@ -597,7 +690,7 @@ def ver_analisis_avanzado_alumno(correo: str) -> None:
             fetch_estadisticas_alumno
         )
     else:
-        print(f"\nℹ️  Análisis básico disponible (análisis completo requiere todas las actividades en 'Perfecto')")
+        print(f"\n📊 Análisis básico disponible (análisis completo requiere todas las actividades en 'Perfecto')")
         # Análisis básico con información disponible
         stats_globales = fetch_estadisticas_globales()
         stats_alumno = fetch_estadisticas_alumno(correo)
@@ -614,7 +707,7 @@ def ver_analisis_avanzado_alumno(correo: str) -> None:
                 "areas_mejora": [],
                 "recomendaciones": []
             },
-            "nota": "⚠️ Análisis básico - Para análisis completo completa todas las actividades"
+            "nota": "📝 Análisis básico - Para análisis completo completa todas las actividades"
         }
         
         # Analizar actividades completadas del alumno
@@ -659,7 +752,7 @@ def ver_analisis_avanzado_alumno(correo: str) -> None:
                 elif comparativa["diferencia_porcentual"] < 30:
                     comparativa["eficiencia"] = "LENTO"
                 else:
-                                        comparativa["eficiencia"] = "MUY_LENTO"
+                    comparativa["eficiencia"] = "MUY_LENTO"
             
             analisis["comparativas"].append(comparativa)
         
@@ -669,12 +762,12 @@ def ver_analisis_avanzado_alumno(correo: str) -> None:
     
     # Mostrar resultados del análisis
     if "error" in analisis:
-        print(f"\nℹ️  {analisis['error']}")
+        print(f"\n❌ {analisis['error']}")
         return
     
     if not analisis.get("comparativas"):
-        print("⚠️ No hay suficientes datos de tiempo para realizar el análisis")
-        print("💡 Las actividades necesitan tener registro de duración")
+        print("❌ No hay suficientes datos de tiempo para realizar el análisis")
+        print("📝 Las actividades necesitan tener registro de duración")
         return
     
     # Mostrar resumen ejecutivo primero
@@ -682,37 +775,37 @@ def ver_analisis_avanzado_alumno(correo: str) -> None:
     
     # Resumen general
     resumen: Dict[str, Any] = analisis["resumen_general"]
-    print(f"\n🎯 RESUMEN DE TU DESEMPEÑO")
+    print(f"\n📊 RESUMEN DE TU DESEMPEÑO")
     print("-" * 40)
-    print(f"• 📈 Actividades analizadas: {resumen.get('actividades_analizadas', 0)}")
+    print(f"📦 Actividades analizadas: {resumen.get('actividades_analizadas', 0)}")
     tiempo_total: float = resumen.get('tiempo_total_alumno', 0)
     if tiempo_total > 0:
-        print(f"• ⏱️  Tiempo total invertido: {formatear_tiempo_analisis(tiempo_total)}")
+        print(f"⏱️ Tiempo total invertido: {formatear_tiempo_analisis(tiempo_total)}")
     
     # Mostrar insights generados
     insights: Dict[str, List[str]] = analisis["insights"]
     
     if insights.get("fortalezas"):
-        print(f"\n💪 TUS FORTALEZAS")
+        print(f"\n🟢 TUS FORTALEZAS")
         print("-" * 25)
         for fortaleza in insights["fortalezas"]:
-            print(f"  {fortaleza}")
+            print(f"  💪 {fortaleza}")
     
     if insights.get("areas_mejora"):
-        print(f"\n🎯 ÁREAS DE MEJORA")
+        print(f"\n🔴 ÁREAS DE MEJORA")
         print("-" * 25)
         for mejora in insights["areas_mejora"]:
-            print(f"  {mejora}")
+            print(f"  📌 {mejora}")
     
     if insights.get("recomendaciones"):
-        print(f"\n💡 RECOMENDACIONES")
+        print(f"\n🎯 RECOMENDACIONES")
         print("-" * 20)
         for recomendacion in insights["recomendaciones"]:
-            print(f"  {recomendacion}")
+            print(f"  💡 {recomendacion}")
     
     # Opción para ver análisis detallado
     if analisis.get("comparativas"):
-        print(f"\n📋 ¿Ver análisis detallado por actividad? (s/n): ", end="")
+        print(f"\n🔍 ¿Ver análisis detallado por actividad? (s/n): ", end="")
         if input().strip().lower() == 's':
             _mostrar_analisis_detallado(analisis)
 
@@ -734,14 +827,14 @@ def _generar_insights_basicos(analisis: Dict[str, Any], tiene_todo_perfecto: boo
     
     # Generar fortalezas
     if actividades_eficientes:
-        insights["fortalezas"].append(f"⚡ Eres eficiente en {len(actividades_eficientes)} actividades")
+        insights["fortalezas"].append(f"🚀 Eres eficiente en {len(actividades_eficientes)} actividades")
         for act in actividades_eficientes[:2]:
             tiempo_ahorrado: float = -act.get("diferencia_porcentual", 0)
             insights["fortalezas"].append(f"   • {act['actividad']}: {tiempo_ahorrado:.1f}% más rápido que el promedio")
     
     # Generar áreas de mejora
     if actividades_lentas:
-        insights["areas_mejora"].append(f"⏰ Puedes mejorar tu ritmo en {len(actividades_lentas)} actividades")
+        insights["areas_mejora"].append(f"🐢 Puedes mejorar tu ritmo en {len(actividades_lentas)} actividades")
         for act in actividades_lentas[:2]:
             tiempo_extra: float = act.get("diferencia_porcentual", 0)
             insights["areas_mejora"].append(f"   • {act['actividad']}: {tiempo_extra:.1f}% más lento que el promedio")
@@ -753,21 +846,21 @@ def _generar_insights_basicos(analisis: Dict[str, Any], tiene_todo_perfecto: boo
         actividades_intento = [c for c in comparativas if c.get("estado_final") == "Intento"]
         
         if actividades_intento:
-            insights["recomendaciones"].append("🎯 Enfócate en completar las actividades en estado 'Intento'")
+            insights["recomendaciones"].append("🔄 Enfócate en completar las actividades en estado 'Intento'")
         if actividades_completadas:
-            insights["recomendaciones"].append("📈 Busca alcanzar 'Perfecto' en las actividades completadas")
+            insights["recomendaciones"].append("⭐ Busca alcanzar 'Perfecto' en las actividades completadas")
         if actividades_perfectas:
-            insights["recomendaciones"].append("💪 Mantén tu excelencia en las actividades perfectas")
+            insights["recomendaciones"].append("🏆 Mantén tu excelencia en las actividades perfectas")
         
-        insights["recomendaciones"].append("🏆 Completa todas las actividades para obtener un análisis completo")
+        insights["recomendaciones"].append("🎯 Completa todas las actividades para obtener un análisis completo")
 
 
 def ver_estadisticas_sistema() -> None:
     """Muestra estadísticas generales del sistema."""
-    print("\n" + "📊 ESTADÍSTICAS DEL SISTEMA")
+    print("\n📈 ESTADÍSTICAS DEL SISTEMA")
     print("=" * 50)
     mostrar_estadisticas_rapidas()
-    input("\n📝 Presione Enter para continuar...")
+    input("\n⏎ Presione Enter para continuar...")
 
 # ============================================================
 # FUNCIONES DE ESTADÍSTICAS DE PARALELO
@@ -776,12 +869,12 @@ def ver_estadisticas_sistema() -> None:
 def mostrar_menu_paralelos() -> str:
     """Muestra el menú de estadísticas de paralelo."""
     print("\n" + "="*40)
-    print("📊 ESTADÍSTICAS DE PARALELO")
+    print("🏫 ESTADÍSTICAS DE PARALELO")
     print("="*40)
-    print("1. Ver lista de paralelos disponibles")
-    print("2. Analizar paralelo específico")
-    print("0. ↩️ Volver al menú principal")
-    return input("\nSeleccione una opción: ").strip()
+    print("📋 1. Ver lista de paralelos disponibles")
+    print("🔍 2. Analizar paralelo específico")
+    print("↩️  0. Volver al menú principal")
+    return input("\n🎯 Seleccione una opción: ").strip()
 
 
 def ver_lista_paralelos() -> None:
@@ -789,20 +882,20 @@ def ver_lista_paralelos() -> None:
     from Neo4J.neo_queries import fetch_paralelos_disponibles
     from Neo4J.consultar import obtener_lista_paralelos_procesada
     
-    print("\n" + "📋 PARALELOS DISPONIBLES")
+    print("\n🏫 PARALELOS DISPONIBLES")
     print("=" * 40)
     
     try:
         paralelos = obtener_lista_paralelos_procesada(fetch_paralelos_disponibles)
         
         if not paralelos:
-            print("⚠️ No se encontraron paralelos en la base de datos")
+            print("❌ No se encontraron paralelos en la base de datos")
             return
         
-        print(f"🎯 Total de paralelos encontrados: {len(paralelos)}\n")
+        print(f"📊 Total de paralelos encontrados: {len(paralelos)}\n")
         
         for i, paralelo in enumerate(paralelos, 1):
-            print(f"{i}. {paralelo}")
+            print(f"{i}. 🏫 {paralelo}")
             
     except Exception as e:
         print(f"❌ Error obteniendo lista de paralelos: {e}")
@@ -813,7 +906,7 @@ def analizar_paralelo_especifico() -> None:
     from Neo4J.neo_queries import fetch_paralelos_disponibles, fetch_detalle_paralelo
     from Neo4J.consultar import obtener_lista_paralelos_procesada, generar_reporte_paralelo_completo
     
-    print("\n" + "🔍 ANALIZAR PARALELO ESPECÍFICO")
+    print("\n🔍 ANALIZAR PARALELO ESPECÍFICO")
     print("=" * 40)
     
     try:
@@ -821,17 +914,17 @@ def analizar_paralelo_especifico() -> None:
         paralelos = obtener_lista_paralelos_procesada(fetch_paralelos_disponibles)
         
         if not paralelos:
-            print("⚠️ No se encontraron paralelos en la base de datos")
+            print("❌ No se encontraron paralelos en la base de datos")
             return
         
         # Mostrar lista numerada
-        print("Paralelos disponibles:\n")
+        print("🏫 Paralelos disponibles:\n")
         for i, paralelo in enumerate(paralelos, 1):
-            print(f"{i}. {paralelo}")
+            print(f"{i}. 🏫 {paralelo}")
         
         # Seleccionar paralelo
         try:
-            seleccion = int(input(f"\nSeleccione un paralelo (1-{len(paralelos)}): ").strip())
+            seleccion = int(input(f"\n🎯 Seleccione un paralelo (1-{len(paralelos)}): ").strip())
         except ValueError:
             print("❌ Ingrese un número válido")
             return
@@ -842,7 +935,7 @@ def analizar_paralelo_especifico() -> None:
         
         paralelo_seleccionado = paralelos[seleccion - 1]
         
-        print(f"\n⏳ Analizando paralelo: {paralelo_seleccionado}...")
+        print(f"\n📊 Analizando paralelo: {paralelo_seleccionado}...")
         
         # Generar reporte completo
         reporte = generar_reporte_paralelo_completo(paralelo_seleccionado, fetch_detalle_paralelo)
@@ -866,44 +959,44 @@ def _mostrar_reporte_paralelo(reporte: Dict[str, Any]) -> None:
     actividades_problematicas = reporte.get("actividades_problematicas", {})
     eficiencia = reporte.get("eficiencia", {})
     
-    print("\n" + "📊 REPORTE COMPLETO DEL PARALELO")
+    print("\n📊 REPORTE COMPLETO DEL PARALELO")
     print("=" * 60)
-    print(f"🎯 Paralelo: {paralelo}")
+    print(f"🏫 Paralelo: {paralelo}")
     
     # Resumen ejecutivo
-    print(f"\n🌟 RESUMEN EJECUTIVO")
+    print(f"\n📈 RESUMEN EJECUTIVO")
     print("-" * 30)
     print(f"👥 Alumnos: {resumen_ejecutivo.get('total_alumnos', 0)}")
-    print(f"📚 Actividades: {resumen_ejecutivo.get('total_actividades', 0)}")
-    print(f"📈 Completitud: {resumen_ejecutivo.get('porcentaje_completitud', 0):.1f}%")
+    print(f"📦 Actividades: {resumen_ejecutivo.get('total_actividades', 0)}")
+    print(f"📊 Completitud: {resumen_ejecutivo.get('porcentaje_completitud', 0):.1f}%")
     print(f"⚠️  Actividades críticas: {resumen_ejecutivo.get('actividades_criticas', 0)}")
-    print(f"🎯 Mejor eficiencia: {resumen_ejecutivo.get('mejor_eficiencia', 0):.1f}%")
-    print(f"📉 Peor eficiencia: {resumen_ejecutivo.get('peor_eficiencia', 0):.1f}%")
+    print(f"🚀 Mejor eficiencia: {resumen_ejecutivo.get('mejor_eficiencia', 0):.1f}%")
+    print(f"🐢 Peor eficiencia: {resumen_ejecutivo.get('peor_eficiencia', 0):.1f}%")
     
     # Puntos fuertes y áreas de mejora
     puntos_fuertes = resumen_ejecutivo.get('puntos_fuertes', [])
     areas_mejora = resumen_ejecutivo.get('areas_mejora', [])
     
     if puntos_fuertes:
-        print(f"\n💪 PUNTOS FUERTES")
+        print(f"\n🟢 PUNTOS FUERTES")
         print("-" * 20)
         for punto in puntos_fuertes:
             print(f"  ✅ {punto}")
     
     if areas_mejora:
-        print(f"\n🎯 ÁREAS DE MEJORA")
+        print(f"\n🔴 ÁREAS DE MEJORA")
         print("-" * 20)
         for area in areas_mejora:
-            print(f"  🔄 {area}")
+            print(f"  📌 {area}")
     
     # Completitud detallada
     print(f"\n📊 COMPLETITUD DETALLADA")
     print("-" * 25)
-    print(f"• Actividades totales: {completitud.get('total_actividades', 0)}")
-    print(f"• Completadas por todos: {completitud.get('actividades_completadas_todos', 0)}")
-    print(f"• Promedio por alumno: {completitud.get('promedio_completadas_por_alumno', 0):.1f}")
-    print(f"• Completitud global: {completitud.get('porcentaje_completitud_global', 0):.1f}%")
-    print(f"• Nivel: {completitud.get('nivel_completitud', 'Desconocido')}")
+    print(f"📦 Actividades totales: {completitud.get('total_actividades', 0)}")
+    print(f"✅ Completadas por todos: {completitud.get('actividades_completadas_todos', 0)}")
+    print(f"📈 Promedio por alumno: {completitud.get('promedio_completadas_por_alumno', 0):.1f}")
+    print(f"📊 Completitud global: {completitud.get('porcentaje_completitud_global', 0):.1f}%")
+    print(f"🏷️  Nivel: {completitud.get('nivel_completitud', 'Desconocido')}")
     
     # Actividades problemáticas
     actividades_criticas = actividades_problematicas.get('criticas', [])
@@ -913,21 +1006,23 @@ def _mostrar_reporte_paralelo(reporte: Dict[str, Any]) -> None:
     if total_problematicas > 0:
         print(f"\n⚠️  ACTIVIDADES CON BAJA PARTICIPACIÓN")
         print("-" * 35)
-        print(f"• Total: {total_problematicas} actividades")
-        print(f"• Críticas (<25%): {len(actividades_criticas)}")
-        print(f"• No críticas: {len(actividades_no_criticas)}")
+        print(f"📦 Total: {total_problematicas} actividades")
+        print(f"🔴 Críticas (<25%): {len(actividades_criticas)}")
+        print(f"🟡 No críticas: {len(actividades_no_criticas)}")
         
         if actividades_criticas:
             print(f"\n🔴 ACTIVIDADES CRÍTICAS (prioridad alta):")
-            for i, act in enumerate(actividades_criticas[:5], 1):  # Mostrar máximo 5
-                print(f"  {i}. {act.get('nombre', 'Desconocida')} ({act.get('tipo', 'Desconocido')})")
-                print(f"     Participación: {act.get('porcentaje_participacion', 0):.1f}%")
+            for i, act in enumerate(actividades_criticas[:5], 1):
+                tipo_emoji = "📝" if "cuestionario" in str(act.get('tipo', '')).lower() else "👨‍🏫" if "ayudantía" in str(act.get('tipo', '')).lower() or "ayudantia" in str(act.get('tipo', '')).lower() else "📚"
+                print(f"  {i}. {tipo_emoji} {act.get('nombre', 'Desconocida')} ({act.get('tipo', 'Desconocido')})")
+                print(f"     📊 Participación: {act.get('porcentaje_participacion', 0):.1f}%")
         
         if actividades_no_criticas:
             print(f"\n🟡 ACTIVIDADES CON BAJA PARTICIPACIÓN:")
-            for i, act in enumerate(actividades_no_criticas[:3], 1):  # Mostrar máximo 3
-                print(f"  {i}. {act.get('nombre', 'Desconocida')} ({act.get('tipo', 'Desconocido')})")
-                print(f"     Participación: {act.get('porcentaje_participacion', 0):.1f}%")
+            for i, act in enumerate(actividades_no_criticas[:3], 1):
+                tipo_emoji = "📝" if "cuestionario" in str(act.get('tipo', '')).lower() else "👨‍🏫" if "ayudantía" in str(act.get('tipo', '')).lower() or "ayudantia" in str(act.get('tipo', '')).lower() else "📚"
+                print(f"  {i}. {tipo_emoji} {act.get('nombre', 'Desconocida')} ({act.get('tipo', 'Desconocido')})")
+                print(f"     📊 Participación: {act.get('porcentaje_participacion', 0):.1f}%")
     
     # Eficiencia
     metricas_eficiencia = eficiencia.get('metricas_agregadas', {})
@@ -935,25 +1030,27 @@ def _mostrar_reporte_paralelo(reporte: Dict[str, Any]) -> None:
     peores = eficiencia.get('peores', [])
     insights = eficiencia.get('insights', [])
     
-    print(f"\n⚡ EFICIENCIA DE ACTIVIDADES")
+    print(f"\n⏱️  EFICIENCIA DE ACTIVIDADES")
     print("-" * 30)
-    print(f"• Mejor eficiencia: {metricas_eficiencia.get('mejor_eficiencia', 0):.1f}%")
-    print(f"• Peor eficiencia: {metricas_eficiencia.get('peor_eficiencia', 0):.1f}%")
-    print(f"• Brecha de eficiencia: {metricas_eficiencia.get('brecha_eficiencia', 0):.1f}%")
+    print(f"🚀 Mejor eficiencia: {metricas_eficiencia.get('mejor_eficiencia', 0):.1f}%")
+    print(f"🐢 Peor eficiencia: {metricas_eficiencia.get('peor_eficiencia', 0):.1f}%")
+    print(f"📊 Brecha de eficiencia: {metricas_eficiencia.get('brecha_eficiencia', 0):.1f}%")
     
     if mejores:
         print(f"\n🟢 TOP 3 ACTIVIDADES MÁS EFICIENTES:")
         for i, act in enumerate(mejores[:3], 1):
-            print(f"  {i}. {act.get('nombre', 'Desconocida')} ({act.get('tipo', 'Desconocido')})")
-            print(f"     Eficiencia: {act.get('eficiencia', 0):.1f}%")
-            print(f"     Perfectos: {act.get('total_perfectos', 0)} | Completados: {act.get('total_completados', 0)}")
+            tipo_emoji = "📝" if "cuestionario" in str(act.get('tipo', '')).lower() else "👨‍🏫" if "ayudantía" in str(act.get('tipo', '')).lower() or "ayudantia" in str(act.get('tipo', '')).lower() else "📚"
+            print(f"  {i}. {tipo_emoji} {act.get('nombre', 'Desconocida')} ({act.get('tipo', 'Desconocido')})")
+            print(f"     📊 Eficiencia: {act.get('eficiencia', 0):.1f}%")
+            print(f"     🏆 Perfectos: {act.get('total_perfectos', 0)} | ✅ Completados: {act.get('total_completados', 0)}")
     
     if peores:
         print(f"\n🔴 TOP 3 ACTIVIDADES MENOS EFICIENTES:")
         for i, act in enumerate(peores[:3], 1):
-            print(f"  {i}. {act.get('nombre', 'Desconocida')} ({act.get('tipo', 'Desconocido')})")
-            print(f"     Eficiencia: {act.get('eficiencia', 0):.1f}%")
-            print(f"     Perfectos: {act.get('total_perfectos', 0)} | Completados: {act.get('total_completados', 0)}")
+            tipo_emoji = "📝" if "cuestionario" in str(act.get('tipo', '')).lower() else "👨‍🏫" if "ayudantía" in str(act.get('tipo', '')).lower() or "ayudantia" in str(act.get('tipo', '')).lower() else "📚"
+            print(f"  {i}. {tipo_emoji} {act.get('nombre', 'Desconocida')} ({act.get('tipo', 'Desconocido')})")
+            print(f"     📊 Eficiencia: {act.get('eficiencia', 0):.1f}%")
+            print(f"     🏆 Perfectos: {act.get('total_perfectos', 0)} | ✅ Completados: {act.get('total_completados', 0)}")
     
     if insights:
         print(f"\n💡 INSIGHTS AUTOMÁTICOS:")
@@ -976,7 +1073,7 @@ def manejar_estadisticas_paralelo() -> None:
         else:
             print("❌ Opción no válida")
         
-        input("\n📝 Presione Enter para continuar...")
+        input("\n⏎ Presione Enter para continuar...")
 
 # ============================================================
 # Bucle Principal del Sistema
@@ -989,69 +1086,51 @@ def main() -> None:
         opcion = mostrar_menu_principal()
 
         if opcion == "1":
-            print("\n🔹 Ejecutando inserción de datos...")
+            print("\n📊 Ejecutando inserción de datos...")
             print("⏳ Esto puede tomar unos momentos...")
             rellenarGrafo()
             input("\n✅ Inserción completada. Presione Enter para continuar...")
 
         elif opcion == "2":
-            alumnos_data = fetch_alumnos()
-            if not alumnos_data:
-                print("⚠️ No hay alumnos registrados en el sistema")
-                print("💡 Ejecute primero la opción 1 para insertar datos")
-                input("\nPresione Enter para continuar...")
+            # PRIMERO: Seleccionar paralelo
+            from Neo4J.neo_queries import fetch_paralelos_disponibles
+            from Neo4J.consultar import obtener_lista_paralelos_procesada
+            
+            paralelos = obtener_lista_paralelos_procesada(fetch_paralelos_disponibles)
+            if not paralelos:
+                print("❌ No hay paralelos registrados en el sistema")
+                print("📝 Ejecute primero la opción 1 para insertar datos")
+                input("\n⏎ Presione Enter para continuar...")
                 continue
 
-            # Preparar datos para selección
-            alumnos_nombres = [alumno["nombre"] for alumno in alumnos_data]
-            alumno_map = {alumno["nombre"]: alumno["correo"] for alumno in alumnos_data}
-
+            # Seleccionar paralelo
             while True:
                 limpiar_consola()
-                print("\n" + "👥 LISTA DE ALUMNOS")
+                print("\n🏫 SELECCIONAR PARALELO")
                 print("=" * 40)
-                print("0. ↩️ Volver al menú principal")
+                print("↩️  0. Volver al menú principal")
                 
-                for idx, nombre in enumerate(alumnos_nombres, start=1):
-                    print(f"{idx}. {nombre}")
+                for idx, paralelo in enumerate(paralelos, start=1):
+                    print(f"{idx}. 🏫 {paralelo}")
 
                 try:
-                    seleccion = int(input(f"\nSeleccione un alumno (0-{len(alumnos_nombres)}): ").strip())
+                    seleccion_paralelo = int(input(f"\n🎯 Seleccione un paralelo (0-{len(paralelos)}): ").strip())
                 except ValueError:
                     print("❌ Ingrese un número válido")
-                    input("\nPresione Enter para continuar...")
+                    input("\n⏎ Presione Enter para continuar...")
                     continue
 
-                if seleccion == 0:
+                if seleccion_paralelo == 0:
                     break
-                elif 1 <= seleccion <= len(alumnos_nombres):
-                    alumno_nombre = alumnos_nombres[seleccion - 1]
-                    alumno_correo = alumno_map[alumno_nombre]
-
-                    while True:
-                        limpiar_consola()
-                        print(f"\n🎓 ALUMNO: {alumno_nombre}")
-                        print("=" * 40)
-                        opcion_alumno = mostrar_menu_alumno(alumno_nombre)
-
-                        if opcion_alumno == "1":
-                            ver_progreso_alumno(alumno_correo)
-                        elif opcion_alumno == "2":
-                            ver_siguiente_actividad_alumno(alumno_correo)
-                        elif opcion_alumno == "3":
-                            ver_roadmap_alumno(alumno_correo)
-                        elif opcion_alumno == "4":
-                            ver_analisis_avanzado_alumno(alumno_correo)
-                        elif opcion_alumno == "0":
-                            break
-                        else:
-                            print("❌ Opción no válida")
-
-                        input("\n📝 Presione Enter para continuar...")
-
+                elif 1 <= seleccion_paralelo <= len(paralelos):
+                    paralelo_seleccionado = paralelos[seleccion_paralelo - 1]
+                    
+                    # SEGUNDO: Seleccionar alumno del paralelo elegido
+                    _manejar_seleccion_alumno_por_paralelo(paralelo_seleccionado)
+                    break
                 else:
-                    print(f"❌ Ingrese un número entre 0 y {len(alumnos_nombres)}")
-                    input("\nPresione Enter para continuar...")
+                    print(f"❌ Ingrese un número entre 0 y {len(paralelos)}")
+                    input("\n⏎ Presione Enter para continuar...")
 
         elif opcion == "3":
             manejar_estadisticas_paralelo()
@@ -1061,22 +1140,20 @@ def main() -> None:
 
         elif opcion == "0":
             print("\n👋 ¡Hasta pronto!")
-            print("💾 Cerrando conexiones...")
+            print("🔌 Cerrando conexiones...")
             driver.close()
             break
 
         else:
             print("❌ Opción no válida")
-            input("\nPresione Enter para continuar...")
-
-
+            input("\n⏎ Presione Enter para continuar...")
 
 
 if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        print("\n\n⚠️ Programa interrumpido por el usuario")
+        print("\n\n⏹️  Programa interrumpido por el usuario")
         driver.close()
     except Exception as e:
         print(f"\n❌ Error inesperado: {e}")

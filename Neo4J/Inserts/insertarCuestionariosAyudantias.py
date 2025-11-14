@@ -35,7 +35,7 @@ Estructura de carpetas esperada:
 """
 
 from pathlib import Path
-from typing import Union, Optional, Callable
+from typing import Union, Optional, Callable, Dict
 from neo4j import Driver, ManagedTransaction
 import re
 import logging
@@ -44,83 +44,183 @@ import logging
 logger = logging.getLogger(__name__)
 
 # Type alias para funciones de transacción que procesan archivos
-TransactionFunction = Callable[[ManagedTransaction, str, str], None]
+TransactionFunction = Callable[[ManagedTransaction, str, str, str], None]
 
 
 # ==========================
 # Función: limpiar nombre de archivo
 # ==========================
 
-def limpiar_nombre_archivo(nombre_archivo: str) -> str:
+def limpiar_nombre_archivo(nombre_archivo: str, paralelo_objetivo: str) -> Optional[str]:
     """
-    Limpia el nombre del archivo removiendo extensión y sufijos como '-calificaciones'.
-    
-    Esta función es crucial para normalizar los nombres de actividades antes de
-    insertarlos en la base de datos, asegurando consistencia en la nomenclatura.
+    Limpia el nombre del archivo y FILTRA solo el paralelo objetivo.
+    Retorna None si no es del paralelo que nos interesa.
     
     Args:
-        nombre_archivo: Nombre original del archivo a limpiar (puede incluir extensión)
+        nombre_archivo: Nombre original del archivo a procesar
+        paralelo_objetivo: Paralelo específico a filtrar (ej: 'P01')
         
     Returns:
-        str: Nombre limpio sin extensión ni sufijos, normalizado y trimmeado
+        Optional[str]: Nombre limpio del archivo o None si no corresponde al paralelo
         
     Example:
-        >>> limpiar_nombre_archivo("cuestionario_1-calificaciones.csv")
-        'cuestionario_1'
-        >>> limpiar_nombre_archivo("ayudantia_final.CSV")
-        'ayudantia_final'
-        
-    Note:
-        - Remueve cualquier extensión de archivo
-        - Elimina sufijos '-calificaciones' (case-insensitive)
-        - Retorna nombre base trimmeado
-        - Fallback seguro al nombre sin extensión en caso de error
+        >>> limpiar_nombre_archivo("INF1211-1234-(1S2025)-P01_Cuestionario1-calificaciones.csv", "P01")
+        'Cuestionario1'
     """
     try:
-        nombre_raw = Path(nombre_archivo).stem  # elimina extensión si la tiene
-        # quitar sufijo "-calificaciones" (insensible a mayúsc/minúsc)
-        nombre_limpio = re.sub(r'(?i)\s*-calificaciones\s*$', '', nombre_raw).strip()
+        nombre_raw = Path(nombre_archivo).stem
+        
+        # ✅ FILTRAR: Solo procesar archivos del paralelo objetivo
+        if paralelo_objetivo.upper() not in nombre_raw.upper():
+            return None  # No procesar
+        
+        # ✅ LIMPIAR: Remover información de paralelo y código del curso
+        patron_inicio = r'INF1211-1234-\(1S2025\)-' + re.escape(paralelo_objetivo) + r'_'
+        nombre_sin_prefijo = re.sub(patron_inicio, '', nombre_raw, flags=re.IGNORECASE)
+        
+        # ✅ ELIMINAR SUFIJO "-calificaciones"
+        patron_final = r'[\s_-]*calificaciones[\s_-]*$'
+        nombre_sin_sufijo = re.sub(patron_final, '', nombre_sin_prefijo, flags=re.IGNORECASE)
+        
+        # ✅ LIMPIEZA FINAL
+        nombre_limpio = nombre_sin_sufijo.strip()
+        nombre_limpio = re.sub(r'\s+', ' ', nombre_limpio).strip()
+        
         return nombre_limpio
+        
     except Exception as e:
-        logger.error(f"❌ Error limpiando nombre de archivo '{nombre_archivo}': {e}")
-        # Fallback: usar el nombre original sin extensión
-        return Path(nombre_archivo).stem
+        logger.error(f"Error limpiando nombre de archivo '{nombre_archivo}': {e}")
+        return None
+
+
+# ==========================
+# Función: Contar Cuestionarios y Ayudantias para ver que paralelo tiene todos los archivos
+# ==========================
+
+def encontrar_paralelo_completo(base_path: Path, cuestionarios_esperados: int = 33, ayudantias_esperadas: int = 14) -> Optional[str]:
+    """
+    Encuentra qué paralelo tiene la cantidad exacta de actividades esperadas.
+    
+    Escanea recursivamente la estructura de carpetas para identificar qué paralelo
+    contiene la cantidad completa de cuestionarios y ayudantías esperadas.
+    
+    Args:
+        base_path: Ruta base donde buscar las unidades
+        cuestionarios_esperados: Número esperado de cuestionarios por paralelo
+        ayudantias_esperadas: Número esperado de ayudantías por paralelo
+        
+    Returns:
+        Optional[str]: Nombre del paralelo completo o None si no se encuentra
+        
+    Example:
+        >>> paralelo = encontrar_paralelo_completo(Path("/ruta/actividades"))
+        >>> print(paralelo)
+        'P01'
+    """
+    print(f"Buscando paralelo con {cuestionarios_esperados} cuestionarios y {ayudantias_esperadas} ayudantías...")
+    
+    conteo_por_paralelo: Dict[str, Dict[str, int]] = {}
+    
+    # Escanear todos los archivos
+    for unidad_path in base_path.glob("Unidad*"):
+        if not unidad_path.is_dir():
+            continue
+            
+        # Contar cuestionarios por paralelo
+        cuestionarios_dir = unidad_path / "Cuestionarios"
+        if cuestionarios_dir.exists():
+            for archivo in cuestionarios_dir.glob("*.csv"):
+                nombre = archivo.stem
+                match = re.search(r'([Pp]0\d)', nombre)
+                if match:
+                    paralelo = match.group(1).upper()
+                    if paralelo not in conteo_por_paralelo:
+                        conteo_por_paralelo[paralelo] = {'cuestionarios': 0, 'ayudantias': 0}
+                    conteo_por_paralelo[paralelo]['cuestionarios'] += 1
+        
+        # Contar ayudantías por paralelo
+        ayudantias_dir = unidad_path / "Ayudantías"
+        if ayudantias_dir.exists():
+            for archivo in ayudantias_dir.glob("*.csv"):
+                nombre = archivo.stem
+                match = re.search(r'([Pp]0\d)', nombre)
+                if match:
+                    paralelo = match.group(1).upper()
+                    if paralelo not in conteo_por_paralelo:
+                        conteo_por_paralelo[paralelo] = {'cuestionarios': 0, 'ayudantias': 0}
+                    conteo_por_paralelo[paralelo]['ayudantias'] += 1
+    
+    # Mostrar resultados
+    print("CONTEOS POR PARALELO:")
+    paralelo_elegido: Optional[str] = None
+    for paralelo, conteos in sorted(conteo_por_paralelo.items()):
+        status = "✅" if (conteos['cuestionarios'] == cuestionarios_esperados and 
+                         conteos['ayudantias'] == ayudantias_esperadas) else "❌"
+        print(f"   {paralelo}: {conteos['cuestionarios']} cuestionarios, {conteos['ayudantias']} ayudantías {status}")
+        
+        if (conteos['cuestionarios'] == cuestionarios_esperados and 
+            conteos['ayudantias'] == ayudantias_esperadas):
+            paralelo_elegido = paralelo
+    
+    if paralelo_elegido:
+        print(f"PARALELO ELEGIDO: {paralelo_elegido}")
+        return paralelo_elegido
+    else:
+        print("Ningún paralelo tiene la cantidad exacta esperada")
+        # Elegir el que más se acerque
+        mejor_paralelo: Optional[str] = None
+        mejor_puntaje = -1
+        for paralelo, conteos in conteo_por_paralelo.items():
+            puntaje = min(conteos['cuestionarios'], cuestionarios_esperados) + min(conteos['ayudantias'], ayudantias_esperadas)
+            if puntaje > mejor_puntaje:
+                mejor_puntaje = puntaje
+                mejor_paralelo = paralelo
+        if mejor_paralelo:
+            print(f"Usando el más cercano: {mejor_paralelo}")
+            return mejor_paralelo
+        else:
+            print("No se encontró ningún paralelo")
+            return None
 
 
 # ==========================
 # Función: insertar un Cuestionario
 # ==========================
 
-def insertar_cuestionario(tx: ManagedTransaction, unidad: str, nombre_archivo: str) -> None:
+def insertar_cuestionario(tx: ManagedTransaction, unidad: str, nombre_archivo: str, paralelo_objetivo: str) -> None:
     """
-    Inserta (MERGE) un nodo :Cuestionario con su relación a :Unidad.
+    Inserta cuestionario SOLO si es del paralelo objetivo.
     
-    Los cuestionarios representan actividades de evaluación que pertenecen a una
-    unidad específica. Esta función asegura que tanto la unidad como el cuestionario
-    existan y estén relacionados correctamente.
+    Crea un nodo Cuestionario en la base de datos y lo relaciona con su Unidad
+    correspondiente, filtrando únicamente los archivos del paralelo especificado.
     
     Args:
-        tx: Transacción activa de Neo4J para ejecutar la operación
-        unidad: Nombre de la unidad padre a la que pertenece el cuestionario
-        nombre_archivo: Nombre del archivo CSV (se limpiará automáticamente)
+        tx: Transacción de Neo4J
+        unidad: Nombre de la unidad a la que pertenece el cuestionario
+        nombre_archivo: Nombre del archivo CSV del cuestionario
+        paralelo_objetivo: Paralelo específico a procesar
         
-    Raises:
-        Exception: Si hay error en la inserción por problemas de conexión
-                   o restricciones de integridad
-                   
     Example:
-        >>> with driver.session() as session:
-        ...     session.execute_write(insertar_cuestionario, "Unidad_01", "evaluacion_1.csv")
-        ✅ Cuestionario insertado/validado: evaluacion_1 en Unidad_01
-        
-    Note:
-        - Usa MERGE para operación idempotente
-        - Relación: (Unidad)-[:TIENE_CUESTIONARIO]->(Cuestionario)
-        - El nombre se limpia automáticamente de extensiones y sufijos
-        - La unidad se crea si no existe
+        >>> insertar_cuestionario(tx, "Unidad_01", "cuestionario1.csv", "P01")
     """
     try:
-        nombre_limpio = limpiar_nombre_archivo(nombre_archivo)
+        nombre_limpio = limpiar_nombre_archivo(nombre_archivo, paralelo_objetivo)
+        
+        # Si retorna None, es porque no es del paralelo objetivo
+        if nombre_limpio is None:
+            return  # No procesar
+            
+        # Verificar si ya existe
+        result_check = tx.run(
+            "MATCH (c:Cuestionario {nombre: $nombre}) RETURN c",
+            nombre=nombre_limpio
+        )
+        
+        if result_check.single():
+            logger.debug(f"Cuestionario duplicado - Saltando: '{nombre_limpio}'")
+            return
+            
+        logger.info(f"Insertando cuestionario {paralelo_objetivo}: '{nombre_limpio}'")
         
         result = tx.run(
             """
@@ -133,53 +233,51 @@ def insertar_cuestionario(tx: ManagedTransaction, unidad: str, nombre_archivo: s
             nombre=nombre_limpio,
         )
         
-        record = result.single()
-        if record:
-            unidad_nombre: str = record["unidad"]
-            cuestionario_nombre: str = record["cuestionario"]
-            logger.info(f"✅ Cuestionario insertado/validado: {cuestionario_nombre} en {unidad_nombre}")
-        else:
-            logger.warning(f"⚠️ No se pudo verificar la inserción del cuestionario: {nombre_limpio}")
+        if result.single():
+            logger.debug(f"Cuestionario confirmado {paralelo_objetivo}: '{nombre_limpio}'")
             
     except Exception as e:
-        logger.error(f"❌ Error insertando cuestionario {nombre_archivo} en unidad {unidad}: {e}")
-        raise
+        logger.error(f"Error insertando cuestionario: {e}")
 
 
 # ==========================
 # Función: insertar una Ayudantía
 # ==========================
 
-def insertar_ayudantia(tx: ManagedTransaction, unidad: str, nombre_archivo: str) -> None:
+def insertar_ayudantia(tx: ManagedTransaction, unidad: str, nombre_archivo: str, paralelo_objetivo: str) -> None:
     """
-    Inserta (MERGE) un nodo :Ayudantia con su relación a :Unidad.
+    Inserta ayudantía SOLO si es del paralelo objetivo.
     
-    Las ayudantías representan sesiones de apoyo académico que pertenecen a una
-    unidad específica. Esta función asegura la creación y relación correcta
-    entre la unidad y la ayudantía.
+    Crea un nodo Ayudantia en la base de datos y lo relaciona con su Unidad
+    correspondiente, filtrando únicamente los archivos del paralelo especificado.
     
     Args:
-        tx: Transacción activa de Neo4J para ejecutar la operación
-        unidad: Nombre de la unidad padre a la que pertenece la ayudantía
-        nombre_archivo: Nombre del archivo CSV (se limpiará automáticamente)
+        tx: Transacción de Neo4J
+        unidad: Nombre de la unidad a la que pertenece la ayudantía
+        nombre_archivo: Nombre del archivo CSV de la ayudantía
+        paralelo_objetivo: Paralelo específico a procesar
         
-    Raises:
-        Exception: Si hay error en la inserción por problemas de conexión
-                   o restricciones de integridad
-                   
     Example:
-        >>> with driver.session() as session:
-        ...     session.execute_write(insertar_ayudantia, "Unidad_01", "sesion_apoyo.csv")
-        ✅ Ayudantía insertada/validada: sesion_apoyo en Unidad_01
-        
-    Note:
-        - Usa MERGE para operación idempotente
-        - Relación: (Unidad)-[:TIENE_AYUDANTIA]->(Ayudantia)
-        - El nombre se limpia automáticamente de extensiones y sufijos
-        - La unidad se crea si no existe
+        >>> insertar_ayudantia(tx, "Unidad_01", "ayudantia1.csv", "P01")
     """
     try:
-        nombre_limpio = limpiar_nombre_archivo(nombre_archivo)
+        nombre_limpio = limpiar_nombre_archivo(nombre_archivo, paralelo_objetivo)
+        
+        # Si retorna None, es porque no es del paralelo objetivo
+        if nombre_limpio is None:
+            return  # No procesar
+            
+        # Verificar si ya existe
+        result_check = tx.run(
+            "MATCH (a:Ayudantia {nombre: $nombre}) RETURN a",
+            nombre=nombre_limpio
+        )
+        
+        if result_check.single():
+            logger.debug(f"Ayudantía duplicada - Saltando: '{nombre_limpio}'")
+            return
+            
+        logger.info(f"Insertando ayudantía {paralelo_objetivo}: '{nombre_limpio}'")
         
         result = tx.run(
             """
@@ -192,17 +290,11 @@ def insertar_ayudantia(tx: ManagedTransaction, unidad: str, nombre_archivo: str)
             nombre=nombre_limpio,
         )
         
-        record = result.single()
-        if record:
-            unidad_nombre: str = record["unidad"]
-            ayudantia_nombre: str = record["ayudantia"]
-            logger.info(f"✅ Ayudantía insertada/validada: {ayudantia_nombre} en {unidad_nombre}")
-        else:
-            logger.warning(f"⚠️ No se pudo verificar la inserción de la ayudantía: {nombre_limpio}")
+        if result.single():
+            logger.debug(f"Ayudantía confirmada {paralelo_objetivo}: '{nombre_limpio}'")
             
     except Exception as e:
-        logger.error(f"❌ Error insertando ayudantía {nombre_archivo} en unidad {unidad}: {e}")
-        raise
+        logger.error(f"Error insertando ayudantía: {e}")
 
 
 # ==========================
@@ -246,56 +338,37 @@ def procesar_archivos_en_carpeta(
     driver: Driver, 
     unidad_nombre: str, 
     carpeta: Optional[Path], 
-    tipo_archivo: str
+    tipo_archivo: str,
+    paralelo_objetivo: str
 ) -> int:
     """
-    Procesa archivos CSV en una carpeta específica usando la función de transacción proporcionada.
-    
-    Esta función auxiliar maneja el procesamiento de archivos individuales dentro de
-    una carpeta, aplicando la función de inserción correspondiente y manejando errores
-    de manera granular por archivo.
+    Procesa archivos CSV en una carpeta específica usando el paralelo objetivo.
     
     Args:
         tx_funcion: Función de transacción a ejecutar (insertar_cuestionario o insertar_ayudantia)
         driver: Driver de conexión a Neo4J
-        unidad_nombre: Nombre de la unidad a la que pertenecen los archivos
-        carpeta: Carpeta donde buscar archivos CSV (puede ser None si no existe)
-        tipo_archivo: Tipo de archivo para logging descriptivo ('cuestionario' o 'ayudantía')
+        unidad_nombre: Nombre de la unidad actual
+        carpeta: Path de la carpeta a procesar
+        tipo_archivo: Tipo de archivo para logging ('cuestionario' o 'ayudantía')
+        paralelo_objetivo: Paralelo específico a procesar
         
     Returns:
         int: Número de archivos procesados exitosamente
-        
-    Example:
-        >>> procesados = procesar_archivos_en_carpeta(
-        ...     insertar_cuestionario, driver, "Unidad_01", 
-        ...     Path("/ruta/Unidad_01/Cuestionarios"), "cuestionario"
-        ... )
-        📄 Procesando cuestionario: evaluacion_1.csv
-        ✅ Cuestionario insertado/validado: evaluacion_1 en Unidad_01
-        >>> print(procesados)
-        1
-        
-    Note:
-        - Solo procesa archivos con extensión .csv (case-insensitive)
-        - Ordena archivos alfabéticamente antes de procesar
-        - Continúa procesamiento despite errores individuales
-        - Retorna 0 si la carpeta no existe o está vacía
     """
     if not carpeta or not carpeta.exists() or not carpeta.is_dir():
-        logger.warning(f"⚠️ Carpeta de {tipo_archivo} no encontrada en {unidad_nombre}")
+        logger.warning(f"Carpeta de {tipo_archivo} no encontrada en {unidad_nombre}")
         return 0
     
     archivos_procesados = 0
     for archivo in sorted(carpeta.iterdir()):
         if archivo.is_file() and archivo.suffix.lower() == ".csv":
             try:
-                logger.debug(f"   📄 Procesando {tipo_archivo}: {archivo.name}")
+                logger.debug(f"Procesando {tipo_archivo}: {archivo.name}")
                 with driver.session() as session:
-                    session.execute_write(tx_funcion, unidad_nombre, archivo.name)
+                    session.execute_write(tx_funcion, unidad_nombre, archivo.name, paralelo_objetivo)
                 archivos_procesados += 1
             except Exception as e:
-                logger.error(f"❌ Error procesando {tipo_archivo} {archivo.name}: {e}")
-                # Continuar con el siguiente archivo
+                logger.error(f"Error procesando {tipo_archivo} {archivo.name}: {e}")
                 continue
                 
     return archivos_procesados
@@ -308,37 +381,18 @@ def procesar_archivos_en_carpeta(
 def procesar_cuestionarios_y_ayudantias(driver: Driver, base_path: Union[str, Path]) -> None:
     """
     Procesa recursivamente todas las unidades, cuestionarios y ayudantías en la ruta base.
-    
-    Esta es la función principal del módulo que orquesta todo el proceso de inserción:
-    1. 🔍 Valida la ruta base y encuentra unidades
-    2. 📁 Procesa cada unidad individualmente
-    3. 📝 Busca y procesa cuestionarios en cada unidad
-    4. 👥 Busca y procesa ayudantías en cada unidad
-    5. 📊 Genera reporte final del proceso
+    USA SOLO EL PARALELO QUE TENGA LA CANTIDAD EXACTA DE ACTIVIDADES.
     
     Args:
-        driver: Instancia de driver Neo4J para ejecutar las operaciones
-        base_path: Path o string a la carpeta que contiene las unidades
+        driver: Driver de conexión a Neo4J
+        base_path: Ruta base donde se encuentran las carpetas de unidades
         
     Raises:
         FileNotFoundError: Si la ruta base no existe o no es un directorio
-        ValueError: Si no se encuentran carpetas de unidad para procesar
+        ValueError: Si no se encuentran carpetas de unidad o paralelo completo
         
     Example:
-        >>> driver = obtener_driver()
         >>> procesar_cuestionarios_y_ayudantias(driver, "/ruta/actividades")
-        🔍 Iniciando procesamiento de cuestionarios y ayudantías en: /ruta/actividades
-        📁 Procesando unidad: Unidad_01
-        ✅ Cuestionario insertado/validado: evaluacion_1 en Unidad_01
-        ✅ Ayudantía insertada/validada: sesion_1 en Unidad_01
-        ...
-        ✅ Procesamiento completado: 15 cuestionarios, 8 ayudantías procesados
-        
-    Note:
-        - Proceso continuo: errores en una unidad no detienen el proceso completo
-        - Excluye automáticamente la carpeta 'Alumnos'
-        - Solo procesa archivos CSV
-        - Logging detallado de progreso y errores
     """
     base = Path(base_path)
     if not base.exists():
@@ -347,13 +401,21 @@ def procesar_cuestionarios_y_ayudantias(driver: Driver, base_path: Union[str, Pa
     if not base.is_dir():
         raise FileNotFoundError(f"La ruta base no es un directorio: {base}")
 
-    logger.info(f"🔍 Iniciando procesamiento de cuestionarios y ayudantías en: {base}")
+    # ✅ ENCONTRAR PARALELO COMPLETO
+    paralelo_objetivo = encontrar_paralelo_completo(base, 33, 14)
+    
+    if not paralelo_objetivo:
+        raise ValueError("No se encontró un paralelo con la cantidad exacta de actividades")
+    
+    print(f"Procesando actividades del paralelo: {paralelo_objetivo}")
+
+    logger.info(f"Iniciando procesamiento de cuestionarios y ayudantías en: {base}")
     
     carpetas_unidad = encontrar_carpeta_unidades(base)
     
     if not carpetas_unidad:
         error_msg = f"No se encontraron carpetas de Unidad en: {base}"
-        logger.error(f"❌ {error_msg}")
+        logger.error(error_msg)
         raise ValueError(error_msg)
 
     total_cuestionarios = 0
@@ -361,23 +423,23 @@ def procesar_cuestionarios_y_ayudantias(driver: Driver, base_path: Union[str, Pa
 
     for carpeta_unidad in carpetas_unidad:
         unidad_nombre = carpeta_unidad.name
-        logger.info(f"📁 Procesando unidad: {unidad_nombre}")
+        logger.info(f"Procesando unidad: {unidad_nombre}")
 
         # Procesar cuestionarios
         cuestionarios_dir = carpeta_unidad / "Cuestionarios"
         cuestionarios_procesados = procesar_archivos_en_carpeta(
-            insertar_cuestionario, driver, unidad_nombre, cuestionarios_dir, "cuestionario"
+            insertar_cuestionario, driver, unidad_nombre, cuestionarios_dir, "cuestionario", paralelo_objetivo
         )
         total_cuestionarios += cuestionarios_procesados
 
         # Procesar ayudantías
         ayudantias_dir = carpeta_unidad / "Ayudantías"
         ayudantias_procesadas = procesar_archivos_en_carpeta(
-            insertar_ayudantia, driver, unidad_nombre, ayudantias_dir, "ayudantía"
+            insertar_ayudantia, driver, unidad_nombre, ayudantias_dir, "ayudantía", paralelo_objetivo
         )
         total_ayudantias += ayudantias_procesadas
 
-    logger.info(f"✅ Procesamiento completado: {total_cuestionarios} cuestionarios, {total_ayudantias} ayudantías procesados")
+    logger.info(f"Procesamiento completado: {total_cuestionarios} cuestionarios, {total_ayudantias} ayudantías procesados del paralelo {paralelo_objetivo}")
 
 
 # ==========================
@@ -428,5 +490,5 @@ def contar_cuestionarios_y_ayudantias(driver: Driver) -> dict[str, int]:
                 "ayudantias": total_ayudantias
             }
         except Exception as e:
-            logger.error(f"❌ Error contando cuestionarios y ayudantías: {e}")
+            logger.error(f"Error contando cuestionarios y ayudantías: {e}")
             return {"cuestionarios": 0, "ayudantias": 0}
